@@ -4,10 +4,23 @@ import argparse
 import contextlib
 import io
 import logging
+import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from cmping import CMPingError, perform_ping
+
+
+def _ensure_venv_on_path():
+    """Add the venv's bin dir to PATH so deltachat-rpc-server is found."""
+    bin_dir = str(Path(sys.executable).parent)
+    path = os.environ.get("PATH", "")
+    if bin_dir not in path.split(os.pathsep):
+        os.environ["PATH"] = bin_dir + os.pathsep + path
+
+
+_ensure_venv_on_path()
 
 log = logging.getLogger(__name__)
 
