@@ -42,7 +42,7 @@ class TestParseArgs:
     def test_defaults(self):
         args = parse_args(["--relays", "relays.txt"])
         assert args.relays == "relays.txt"
-        assert args.port == 9740
+        assert args.port == 0
         assert args.textfile is None
         assert args.interval == 900
         assert args.count == 10

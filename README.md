@@ -53,11 +53,11 @@ Histogram buckets are tuned for email round-trips: 0.1, 0.25, 0.5, 1, 2.5, 5, 10
 chatmail-prober supports two output modes (or both simultaneously):
 
 ```bash
-# HTTP exporter (default, Prometheus scrapes this)
+# HTTP exporter (Prometheus scrapes this directly)
 chatmail-prober --relays relays.txt --port 9740
 
 # Textfile for node_exporter's textfile collector
-chatmail-prober --relays relays.txt --port 0 --textfile /var/lib/prometheus/node-exporter/cmping.prom
+chatmail-prober --relays relays.txt --textfile /var/lib/prometheus/node-exporter/cmping.prom
 
 # Both
 chatmail-prober --relays relays.txt --port 9740 --textfile /var/lib/prometheus/node-exporter/cmping.prom
@@ -67,7 +67,7 @@ chatmail-prober --relays relays.txt --port 9740 --textfile /var/lib/prometheus/n
 
 ```
 --relays PATH       Relay list file, one domain per line (required)
---port PORT         HTTP listen port (default: 9740, 0 to disable)
+--port PORT         HTTP listen port (default: off, e.g. --port 9740)
 --textfile PATH     Write .prom file for node_exporter textfile collector
 --interval SECS     Seconds between probe rounds (default: 900 = 15min)
 --count N           Pings per pair per round (default: 10)

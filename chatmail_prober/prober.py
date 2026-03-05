@@ -1,8 +1,7 @@
 """Wraps cmping's perform_ping() for use by the exporter."""
 
 import argparse
-import contextlib
-import io
+import builtins
 import logging
 import os
 import sys
@@ -24,28 +23,12 @@ _ensure_venv_on_path()
 
 log = logging.getLogger(__name__)
 
-
-@contextlib.contextmanager
-def _suppress_stdout():
-    """Suppress all stdout output, including from child threads.
-
-    contextlib.redirect_stdout only replaces sys.stdout, which doesn't
-    catch prints from threads that cached the old stdout object. This
-    redirects at the file descriptor level so all writes to fd 1 go
-    to /dev/null.
-    """
-    devnull = os.open(os.devnull, os.O_WRONLY)
-    old_fd = os.dup(1)
-    try:
-        os.dup2(devnull, 1)
-        sys.stdout = io.TextIOWrapper(os.fdopen(1, "wb", 0))
-        yield
-    finally:
-        sys.stdout.flush()
-        os.dup2(old_fd, 1)
-        sys.stdout = io.TextIOWrapper(os.fdopen(1, "wb", 0))
-        os.close(old_fd)
-        os.close(devnull)
+# Monkey-patch print to a no-op. cmping uses print() for all its
+# user-facing output (statistics, progress). We don't want any of
+# that — we extract data from the Pinger object instead. This is
+# safe for concurrent threads because the replacement is installed
+# once at import time and is a plain function call (no fd tricks).
+builtins.print = lambda *args, **kwargs: None
 
 
 @dataclass
@@ -87,8 +70,7 @@ def run_probe(
     )
 
     try:
-        with _suppress_stdout():
-            pinger = perform_ping(args, accounts_dir=pair_dir)
+        pinger = perform_ping(args, accounts_dir=pair_dir)
         return ProbeResult(
             source=source,
             destination=dest,

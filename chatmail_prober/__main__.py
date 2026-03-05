@@ -45,8 +45,8 @@ def parse_args(argv=None):
     parser.add_argument(
         "--port",
         type=int,
-        default=9740,
-        help="HTTP listen port for /metrics (default: 9740, 0 to disable)",
+        default=0,
+        help="HTTP listen port for /metrics (0 = disabled, e.g. --port 9740)",
     )
     parser.add_argument(
         "--textfile",
