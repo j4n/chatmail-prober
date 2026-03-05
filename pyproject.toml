@@ -1,0 +1,31 @@
+[project]
+name = "chatmail-prober"
+version = "0.1.0"
+description = "Smokeping-style Prometheus exporter for chatmail relay interoperability monitoring"
+requires-python = ">=3.10"
+dependencies = [
+    "prometheus-client>=0.20",
+    "cmping",
+]
+
+[tool.uv.sources]
+cmping = { path = "cmping-src", editable = true }
+
+[project.scripts]
+chatmail-prober = "chatmail_prober.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+lint.select = [
+    "F",   # Pyflakes
+    "I",   # isort
+    "PLC", # Pylint Convention
+    "PLE", # Pylint Error
+    "PLW", # Pylint Warning
+]
+
+[tool.pytest.ini_options]
+addopts = "-v -ra --strict-markers"

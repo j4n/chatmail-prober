@@ -1,0 +1,5 @@
+# Chatmail relays to probe — one domain per line
+# All ordered pairs (including self-loops) will be tested.
+nine.testrun.org
+mehl.cloud
+tarpit.fun

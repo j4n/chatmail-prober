@@ -1,0 +1,4 @@
+[submodule "cmping-src"]
+	path = cmping-src
+	url = git@github.com:chatmail/cmping.git
+	branch = make-importable

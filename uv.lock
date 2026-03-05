@@ -1,0 +1,79 @@
+version = 1
+revision = 1
+requires-python = ">=3.10"
+
+[[package]]
+name = "chatmail-prober"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "cmping" },
+    { name = "prometheus-client" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cmping", editable = "cmping-src" },
+    { name = "prometheus-client", specifier = ">=0.20" },
+]
+
+[[package]]
+name = "cmping"
+source = { editable = "cmping-src" }
+dependencies = [
+    { name = "deltachat-rpc-client" },
+    { name = "deltachat-rpc-server" },
+    { name = "xdg-base-dirs" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "deltachat-rpc-client", specifier = ">=2.24.0" },
+    { name = "deltachat-rpc-server", specifier = ">=2.24.0" },
+    { name = "xdg-base-dirs", specifier = ">=6.0.2" },
+]
+
+[[package]]
+name = "deltachat-rpc-client"
+version = "2.44.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/36/39e5c867c15ddc20a2fb1ce74c5e9c1449423763b53a34a4402c6a039222/deltachat_rpc_client-2.44.0.tar.gz", hash = "sha256:679d904ac6e349dc92424b62d5289d16629202efb9bc36cff4967458c367aaea", size = 57654 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/97/77/f8d1f2bc877e25d909771d80a04838f17471aa5c6a76aa08bd7cd05880be/deltachat_rpc_client-2.44.0-py3-none-any.whl", hash = "sha256:cecdd65164a335bddeb47b755f1cbd237711b90083cafc60c002be088f7e37f4", size = 36343 },
+]
+
+[[package]]
+name = "deltachat-rpc-server"
+version = "2.44.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/d1/4285845c360810099cd4c5396e95c428de2e2d508074ccdcf4f92b42026a/deltachat_rpc_server-2.44.0-py3-none-android_21_arm64_v8a.whl", hash = "sha256:0d9fd75e38bd1946d3daf80ae7c81dc462fa45d30e0c5b9f9bf2a76a30f9f137", size = 11407773 },
+    { url = "https://files.pythonhosted.org/packages/dc/f1/817e142302a3457930077714e2cf3697f9cf21a036a6e9c3705c54ccd451/deltachat_rpc_server-2.44.0-py3-none-android_21_armeabi_v7a.whl", hash = "sha256:5019203642066ed7b90712080fe7412942479851f3f26792da01e126413e2e06", size = 9683838 },
+    { url = "https://files.pythonhosted.org/packages/81/de/2e98cec7958218a0589687508403ea1f11c0ad6e2fe59ff4fd60d107a315/deltachat_rpc_server-2.44.0-py3-none-linux_armv6l.whl", hash = "sha256:482be47ded24cb2bd9dc0f4d90f1f120407f9da818f46fe1ba86542591df97d8", size = 10527875 },
+    { url = "https://files.pythonhosted.org/packages/3d/76/045c0e6c922ba0c56d90495663b94c45477b718ad3c710fc329409157f2b/deltachat_rpc_server-2.44.0-py3-none-linux_armv7l.manylinux_2_17_armv7l.manylinux2014_armv7l.musllinux_1_1_armv7l.whl", hash = "sha256:0e434245b19cb9edac978d1e5e8ebd168cef0361efbd34baaac30f84decea467", size = 10420967 },
+    { url = "https://files.pythonhosted.org/packages/ac/d3/f1a930c185283b63a2a239d20074dfaab918ddc35e66d1e1c7b937341318/deltachat_rpc_server-2.44.0-py3-none-macosx_10_7_x86_64.whl", hash = "sha256:a83d386807fedda07bbb448fbef9b17e8f50eeca3e9ea259d88d92ba780f7371", size = 9894524 },
+    { url = "https://files.pythonhosted.org/packages/32/77/6a1a4130fdb507169e9b51c0ec2ab41c16d41f55b2407ce1d6902c2dbb64/deltachat_rpc_server-2.44.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:4379622ee70b83f377b4698fcedc0818095bd79a884e71a092d2e88951d3e7fa", size = 9705972 },
+    { url = "https://files.pythonhosted.org/packages/55/0b/05ebc8592c672c8cb94abe4e34e6ff80b38348e045ca25c7dd97ae4d5658/deltachat_rpc_server-2.44.0-py3-none-manylinux_2_12_i686.manylinux2010_i686.musllinux_1_1_i686.whl", hash = "sha256:60edbdc3b8af56503f3d442d7a9a0ac6a44fe2d7c80cd97c95ac293706a3317a", size = 11116839 },
+    { url = "https://files.pythonhosted.org/packages/2f/ab/cc82ffb569573890576cae586232ccfba402927e73d69c137c06ed7a33eb/deltachat_rpc_server-2.44.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl", hash = "sha256:1f770ef0578563554a3e58d4bcb75fd1af82d67e68c8c47ea3ac1993f605f54e", size = 11361449 },
+    { url = "https://files.pythonhosted.org/packages/00/80/34719650b0b8f125210a2f4250404fa71c3b1bdf837fc496f9b7be40109b/deltachat_rpc_server-2.44.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.musllinux_1_1_x86_64.whl", hash = "sha256:282ce952f07275fd8411cfed6a301b44d2d031cfbba5f36a7ea8ef232d3a30b5", size = 11687779 },
+    { url = "https://files.pythonhosted.org/packages/67/03/bbe722017b1481f62faa9ea82fbca6db400271da7366ed3968c1f2ec7d37/deltachat_rpc_server-2.44.0-py3-none-win32.whl", hash = "sha256:555782bf2af123d913353f53e599b0be49f7cf9c4f77026c4e71afb1cfde8862", size = 10484972 },
+    { url = "https://files.pythonhosted.org/packages/f5/11/5b21484a8e7730063f47c5279851ed57d1f0fe45c98d0f05da95a66d064a/deltachat_rpc_server-2.44.0-py3-none-win_amd64.whl", hash = "sha256:916b820490b5a06bfe9f223bc3c8258c435b7f521aab65c07a1c4142c7a581ea", size = 10498378 },
+]
+
+[[package]]
+name = "prometheus-client"
+version = "0.24.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/58/a794d23feb6b00fc0c72787d7e87d872a6730dd9ed7c7b3e954637d8f280/prometheus_client-0.24.1.tar.gz", hash = "sha256:7e0ced7fbbd40f7b84962d5d2ab6f17ef88a72504dcf7c0b40737b43b2a461f9", size = 85616 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/74/c3/24a2f845e3917201628ecaba4f18bab4d18a337834c1df2a159ee9d22a42/prometheus_client-0.24.1-py3-none-any.whl", hash = "sha256:150db128af71a5c2482b36e588fc8a6b95e498750da4b17065947c16070f4055", size = 64057 },
+]
+
+[[package]]
+name = "xdg-base-dirs"
+version = "6.0.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/d0/bbe05a15347538aaf9fa5b51ac3b97075dfb834931fcb77d81fbdb69e8f6/xdg_base_dirs-6.0.2.tar.gz", hash = "sha256:950504e14d27cf3c9cb37744680a43bf0ac42efefc4ef4acf98dc736cab2bced", size = 4085 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fc/03/030b47fd46b60fc87af548e57ff59c2ca84b2a1dadbe721bb0ce33896b2e/xdg_base_dirs-6.0.2-py3-none-any.whl", hash = "sha256:3c01d1b758ed4ace150ac960ac0bd13ce4542b9e2cdf01312dcda5012cfebabe", size = 4747 },
+]
