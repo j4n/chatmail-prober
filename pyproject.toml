@@ -18,6 +18,11 @@ chatmail-prober = "chatmail_prober.__main__:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
 [tool.ruff]
 lint.select = [
     "F",   # Pyflakes
@@ -28,4 +33,4 @@ lint.select = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-v -ra --strict-markers"
+addopts = "-v -ra --strict-markers -p no:deltachat_rpc_client.pytestplugin"
