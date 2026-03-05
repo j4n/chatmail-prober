@@ -3,13 +3,11 @@
 VENV   ?= .venv
 PYTHON ?= python3
 
-install: $(VENV)/bin/chatmail-prober
-
-$(VENV)/bin/chatmail-prober: $(VENV)/bin/pip pyproject.toml cmping-src/pyproject.toml
+install: $(VENV)/bin/pip
 	$(VENV)/bin/pip install ./cmping-src
 	$(VENV)/bin/pip install .
 
-install-dev: $(VENV)/bin/pip pyproject.toml cmping-src/pyproject.toml
+install-dev: $(VENV)/bin/pip
 	$(VENV)/bin/pip install ./cmping-src
 	$(VENV)/bin/pip install -e '.[dev]'
 
