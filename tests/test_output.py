@@ -38,3 +38,11 @@ class TestWriteTextfile:
         content = out.read_text()
         assert "old content" not in content
         assert "# HELP" in content
+
+    def test_no_process_metrics_in_textfile(self, tmp_path):
+        """Textfile must not include process_* metrics — they collide
+        with node_exporter's own process collectors."""
+        out = tmp_path / "test.prom"
+        write_textfile(str(out))
+        content = out.read_text()
+        assert "process_" not in content

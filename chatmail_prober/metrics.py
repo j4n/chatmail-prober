@@ -2,7 +2,7 @@
 
 import logging
 
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, REGISTRY
 
 log = logging.getLogger(__name__)
 
@@ -11,16 +11,24 @@ RTT_BUCKETS = (0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60)
 
 LABELS = ["source", "destination"]
 
+# Separate registry without default process_* / gc_* collectors.
+# Used for textfile output to avoid collisions with node_exporter's
+# own process metrics. The default REGISTRY (with process collectors)
+# is still used for the HTTP /metrics endpoint.
+CMPING_REGISTRY = CollectorRegistry()
+
 requests_total = Counter(
     "cmping_requests_total",
     "Total number of ping messages sent",
     LABELS,
+    registry=CMPING_REGISTRY,
 )
 
 responses_total = Counter(
     "cmping_responses_total",
     "Total number of ping messages successfully received",
     LABELS,
+    registry=CMPING_REGISTRY,
 )
 
 response_duration = Histogram(
@@ -28,24 +36,28 @@ response_duration = Histogram(
     "Round-trip time for individual ping messages",
     LABELS,
     buckets=RTT_BUCKETS,
+    registry=CMPING_REGISTRY,
 )
 
 send_errors_total = Counter(
     "cmping_send_errors_total",
     "Total number of failed probe rounds (timeout, crash, setup failure)",
     LABELS,
+    registry=CMPING_REGISTRY,
 )
 
 probe_success = Gauge(
     "cmping_probe_success",
     "Whether the last probe round succeeded (1) or failed (0)",
     LABELS,
+    registry=CMPING_REGISTRY,
 )
 
 account_setup_seconds = Gauge(
     "cmping_account_setup_seconds",
     "Time spent on account setup in the last probe round",
     LABELS,
+    registry=CMPING_REGISTRY,
 )
 
 
