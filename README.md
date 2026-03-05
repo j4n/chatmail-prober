@@ -7,14 +7,21 @@ Periodically probes all pairs of configured chatmail relays using [cmping](https
 ## Quick start
 
 ```bash
-# Create a relay list
+git clone --recurse-submodules <repo-url>
+cd chatmail-prober
+
+# Create a relay list (see https://chatmail.at/relays for public relays)
 cat > relays.txt << EOF
-nine.testrun.org
-mehl.cloud
-tarpit.fun
+host1.example
+host2.example
+host3.example
 EOF
 
-# Run (serves metrics on :9740)
+# Install and run (pick one)
+make install                                          # pip + venv
+.venv/bin/chatmail-prober --relays relays.txt -v
+
+# — or with uv —
 uv run chatmail-prober --relays relays.txt -v
 ```
 
@@ -102,14 +109,16 @@ WantedBy=multi-user.target
 ## Development
 
 ```bash
-# Install dependencies
-uv sync
+# With make (creates .venv automatically)
+make install-dev
+make test
 
-# Run unit tests
+# — or with uv —
+uv sync
 uv run pytest tests/ --ignore=tests/test_live.py
 
-# Run live tests (against real relays)
-CMPING_LIVE_TEST=nine.testrun.org,tarpit.fun uv run pytest tests/test_live.py -v
+# Live tests (against real relays)
+CMPING_LIVE_TEST=nine.testrun.org,tarpit.fun .venv/bin/pytest tests/test_live.py -v
 ```
 
 ## cmping dependency

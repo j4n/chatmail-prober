@@ -18,6 +18,11 @@ chatmail-prober = "chatmail_prober.__main__:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",

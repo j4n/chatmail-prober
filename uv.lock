@@ -11,6 +11,11 @@ dependencies = [
     { name = "prometheus-client" },
 ]
 
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
@@ -20,7 +25,9 @@ dev = [
 requires-dist = [
     { name = "cmping", editable = "cmping-src" },
     { name = "prometheus-client", specifier = ">=0.20" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
 ]
+provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.0.2" }]
