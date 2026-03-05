@@ -25,6 +25,29 @@ _ensure_venv_on_path()
 log = logging.getLogger(__name__)
 
 
+@contextlib.contextmanager
+def _suppress_stdout():
+    """Suppress all stdout output, including from child threads.
+
+    contextlib.redirect_stdout only replaces sys.stdout, which doesn't
+    catch prints from threads that cached the old stdout object. This
+    redirects at the file descriptor level so all writes to fd 1 go
+    to /dev/null.
+    """
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_fd = os.dup(1)
+    try:
+        os.dup2(devnull, 1)
+        sys.stdout = io.TextIOWrapper(os.fdopen(1, "wb", 0))
+        yield
+    finally:
+        sys.stdout.flush()
+        os.dup2(old_fd, 1)
+        sys.stdout = io.TextIOWrapper(os.fdopen(1, "wb", 0))
+        os.close(old_fd)
+        os.close(devnull)
+
+
 @dataclass
 class ProbeResult:
     source: str
@@ -64,7 +87,7 @@ def run_probe(
     )
 
     try:
-        with contextlib.redirect_stdout(io.StringIO()):
+        with _suppress_stdout():
             pinger = perform_ping(args, accounts_dir=pair_dir)
         return ProbeResult(
             source=source,
