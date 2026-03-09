@@ -21,7 +21,7 @@ EOF
 make install                                          # pip + venv
 .venv/bin/chatmail-prober --relays relays.txt -v
 
-# — or with uv —
+# -- or with uv --
 uv run chatmail-prober --relays relays.txt -v
 ```
 
@@ -29,9 +29,43 @@ Then `curl http://localhost:9740/metrics` to see the metrics.
 
 ## How it works
 
-For N relays, chatmail-prober tests all N² ordered pairs (including self-loops A→A as baseline health checks). Each pair runs `cmping` with a configurable number of pings, producing individual round-trip time measurements that feed into Prometheus histograms — giving you smokeping-style latency distribution data.
+For N relays, chatmail-prober tests all N^2 ordered pairs (including self-loops A->A as
+baseline health checks). Each pair runs `cmping` with a configurable number of pings,
+producing individual round-trip time measurements that feed into Prometheus histograms --
+giving you smokeping-style latency distribution data.
 
-Pairs are probed in parallel using a thread pool. Each pair gets its own accounts directory to avoid the deltachat-rpc-server database lock, and accounts are reused across rounds.
+### Per-worker account directories
+
+Accounts are organised by worker, not by pair. With W workers and N relays there are
+W*N account directories instead of 2*N^2. At 30 relays and 10 workers that is 300
+accounts vs 1800. Each worker runs one thread that processes its assigned pairs
+sequentially, so its account directories are never accessed concurrently -- this avoids
+deltachat-rpc-server database lock contention without needing semaphores.
+
+### Burst-mode probing
+
+N pings are sent at a short interval (default 0.1s) so all of them are in-flight at
+once. The prober then waits up to `--timeout` seconds for replies. Loss means the
+message genuinely arrived late or was dropped -- not that we stopped waiting too soon.
+This cuts probe wall-time from count*interval (e.g. 10*1.1s = 11s) down to roughly
+one round-trip, making large matrix runs practical.
+
+### Pre-flight alive check
+
+Before starting the matrix, chatmail-prober runs a single self-probe on each relay in
+parallel. Dead relays are excluded with a warning rather than failing the whole run.
+This means a TLS outage on one relay does not invalidate an entire round.
+
+### Relay selection with --scan
+
+`--scan` probes each relay against itself, ranks them by average RTT, and exits. Use
+this to pick the fastest subset for a matrix run:
+
+```bash
+chatmail-prober --relays all-relays.txt --scan --top 10
+```
+
+See `relay_speedtest.md` for results across all known public chatmail relays.
 
 ## Metrics
 
@@ -66,18 +100,24 @@ chatmail-prober --relays relays.txt --port 9740 --textfile /var/lib/prometheus/n
 ## CLI options
 
 ```
---relays PATH       Relay list file, one domain per line (required)
---port PORT         HTTP listen port (default: off, e.g. --port 9740)
---textfile PATH     Write .prom file for node_exporter textfile collector
---interval SECS     Seconds between probe rounds (default: 900 = 15min)
---count N           Pings per pair per round (default: 10)
---ping-interval S   Seconds between pings within a probe (default: 1.1)
---workers N         Max concurrent probe threads (default: 5)
---cache-dir PATH    Per-pair accounts directory (default: ~/.cache/chatmail-prober)
---timeout SECS      Per-pair timeout (default: 120)
---once              Run one round then exit
--v / -vv            Increase logging verbosity
+--relays PATH        Relay list file, one domain per line (required)
+--scan               Self-probe all relays, print ranked by RTT, then exit
+--top N              Number of fastest relays to highlight in --scan output (default: 10)
+--port PORT          HTTP listen port (default: off, e.g. --port 9740)
+--textfile PATH      Write .prom file for node_exporter textfile collector
+--interval SECS      Seconds between probe rounds (default: 900 = 15min)
+--count N            Pings per pair per round (default: 5)
+--ping-interval S    Seconds between pings within a probe (default: 0.1)
+--timeout SECS       Per-pair receive timeout in seconds (default: 60)
+--workers N          Max concurrent probe threads (default: 5)
+--cache-dir PATH     Base dir for per-worker account directories (default: ~/.cache/chatmail-prober)
+--once               Run one round then exit
+-v                   Show debug messages from chatmail_prober (root logger stays at WARNING)
+-q / --quiet         Suppress progress output (only show warnings/errors)
 ```
+
+Progress is shown at INFO level by default (no flags needed). Use `-q` in cron/systemd
+where you only want errors.
 
 ## Deployment
 
@@ -113,7 +153,7 @@ WantedBy=multi-user.target
 make install-dev
 make test
 
-# — or with uv —
+# -- or with uv --
 uv sync
 uv run pytest tests/ --ignore=tests/test_live.py
 
@@ -128,4 +168,5 @@ chatmail-prober depends on a [fork of cmping](cmping-src/) (branch `make-importa
 - `CMPingError` exception instead of `sys.exit(1)`
 - `Pinger.results` list with per-message RTT data
 - `accounts_dir` parameter on `perform_ping()` for parallel probing
+- `timeout` parameter on `perform_ping()` for deadline-based receive
 - Timing data (`account_setup_time`, etc.) on the Pinger object
