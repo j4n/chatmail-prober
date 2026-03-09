@@ -1,467 +1,276 @@
 {
-  "annotations": {
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus" },
+    { "type": "panel", "id": "table", "name": "Table" },
+    { "type": "panel", "id": "state-timeline", "name": "State timeline" },
+    { "type": "panel", "id": "timeseries", "name": "Time series" },
+    { "type": "panel", "id": "stat", "name": "Stat" }
+  ],
+  "id": null,
+  "uid": "chatmail-prober",
+  "title": "Chatmail Relay Interop",
+  "description": "Smokeping-style interoperability monitoring for chatmail relays",
+  "tags": ["chatmail", "cmping", "interop"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "5m",
+  "time": { "from": "now-2h", "to": "now" },
+  "timepicker": {},
+  "templating": {
     "list": [
       {
-        "builtIn": 1,
-        "datasource": {
-          "type": "grafana",
-          "uid": "-- Grafana --"
-        },
-        "enable": true,
-        "hide": true,
-        "iconColor": "rgba(0, 211, 255, 1)",
-        "name": "Annotations & Alerts",
-        "type": "dashboard"
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "source",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(cmping_probe_success, source)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "destination",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(cmping_probe_success, destination)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "relay",
+        "label": "Relay (self-probe)",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(cmping_probe_success, source)",
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "current": {}
       }
     ]
   },
-  "description": "Smokeping-style interoperability monitoring for chatmail relays",
-  "editable": true,
-  "fiscalYearStartMonth": 0,
-  "graphTooltip": 1,
-  "id": 38,
-  "links": [],
   "panels": [
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 0
-      },
-      "id": 1,
       "title": "Overview",
-      "type": "row"
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "title": "Pairs OK / Total",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
       "fieldConfig": {
         "defaults": {
-          "mappings": [],
-          "max": 1,
-          "min": 0,
           "thresholds": {
-            "mode": "absolute",
             "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 0.8
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.8 },
+              { "color": "green", "value": 1 }
             ]
           },
-          "unit": "percentunit"
-        },
-        "overrides": []
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
       },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 1
-      },
-      "id": 2,
       "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
         "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "graphMode": "none"
       },
-      "pluginVersion": "10.4.2",
       "targets": [
         {
           "expr": "count(cmping_probe_success == 1) / count(cmping_probe_success)",
-          "legendFormat": "success rate",
-          "refId": "A"
+          "legendFormat": "success rate"
         }
-      ],
-      "title": "Pairs OK / Total",
-      "type": "stat"
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "title": "Total Pairs Monitored",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
       "fieldConfig": {
         "defaults": {
-          "mappings": [],
           "thresholds": {
-            "mode": "absolute",
             "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
+              { "color": "blue", "value": null }
             ]
           }
-        },
-        "overrides": []
+        }
       },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 4,
-        "y": 1
-      },
-      "id": 3,
       "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
         "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "graphMode": "none"
       },
-      "pluginVersion": "10.4.2",
       "targets": [
         {
           "expr": "count(cmping_probe_success)",
-          "legendFormat": "pairs",
-          "refId": "A"
+          "legendFormat": "pairs"
         }
-      ],
-      "title": "Total Pairs Monitored",
-      "type": "stat"
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "title": "Failed Pairs",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
       "fieldConfig": {
         "defaults": {
-          "mappings": [],
-          "noValue": "0",
           "thresholds": {
-            "mode": "absolute",
             "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
             ]
-          }
-        },
-        "overrides": []
+          },
+          "noValue": "0"
+        }
       },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 8,
-        "y": 1
-      },
-      "id": 4,
       "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
         "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "graphMode": "none"
       },
-      "pluginVersion": "10.4.2",
       "targets": [
         {
           "expr": "count(cmping_probe_success == 0) or vector(0)",
-          "legendFormat": "failed",
-          "refId": "A"
+          "legendFormat": "failed"
         }
-      ],
-      "title": "Failed Pairs",
-      "type": "stat"
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "title": "Dead Relays",
       "description": "Relays that failed the alive check and are excluded from the matrix.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
       "fieldConfig": {
         "defaults": {
-          "mappings": [],
-          "noValue": "0",
           "thresholds": {
-            "mode": "absolute",
             "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
             ]
-          }
-        },
-        "overrides": []
+          },
+          "noValue": "0"
+        }
       },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 12,
-        "y": 1
-      },
-      "id": 5,
       "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
         "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "graphMode": "none"
       },
-      "pluginVersion": "10.4.2",
       "targets": [
         {
           "expr": "count(count by (source) (max_over_time(cmping_probe_success[$__rate_interval]) == 0) unless on(source) count by (source) (max_over_time(cmping_probe_success[$__rate_interval]) > 0)) or vector(0)",
-          "legendFormat": "dead",
-          "refId": "A"
+          "legendFormat": "dead"
         }
-      ],
-      "title": "Dead Relays",
-      "type": "stat"
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "title": "Median RTT (all pairs)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
       "fieldConfig": {
         "defaults": {
-          "mappings": [],
+          "unit": "s",
           "thresholds": {
-            "mode": "absolute",
             "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 5
-              },
-              {
-                "color": "red",
-                "value": 30
-              }
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 30 }
             ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
+          }
+        }
       },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 16,
-        "y": 1
-      },
-      "id": 6,
       "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "graphMode": "area"
       },
-      "pluginVersion": "10.4.2",
       "targets": [
         {
           "expr": "histogram_quantile(0.5, sum(rate(cmping_response_duration_seconds_bucket[$__rate_interval])) by (le))",
-          "legendFormat": "p50",
-          "refId": "A"
+          "legendFormat": "p50"
         }
-      ],
-      "title": "Median RTT (all pairs)",
-      "type": "stat"
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "description": "All (source, destination) pairs sorted by avg RTT. Green < 5s, yellow < 15s, red >= 15s. Filter with source/destination variables above.",
+      "title": "Probe Results — Avg RTT",
+      "description": "All (source, destination) pairs. Avg RTT = lifetime average (sum/count). Green < 5s, yellow < 10s, red >= 15s. Filter with source/destination variables above.",
+      "type": "table",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 5 },
       "fieldConfig": {
         "defaults": {
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "filterable": true,
-            "inspect": false
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          }
+          "custom": { "filterable": true }
         },
         "overrides": [
           {
-            "matcher": {
-              "id": "byName",
-              "options": "source"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 220
-              }
-            ]
+            "matcher": { "id": "byName", "options": "source" },
+            "properties": [{ "id": "custom.width", "value": 220 }]
           },
           {
-            "matcher": {
-              "id": "byName",
-              "options": "destination"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 220
-              }
-            ]
+            "matcher": { "id": "byName", "options": "destination" },
+            "properties": [{ "id": "custom.width", "value": 220 }]
           },
           {
-            "matcher": {
-              "id": "byName",
-              "options": "avg_rtt"
-            },
+            "matcher": { "id": "byName", "options": "Avg RTT" },
             "properties": [
-              {
-                "id": "displayName",
-                "value": "Avg RTT"
-              },
-              {
-                "id": "unit",
-                "value": "s"
-              },
-              {
-                "id": "decimals",
-                "value": 2
-              },
+              { "id": "unit", "value": "s" },
+              { "id": "decimals", "value": 2 },
+              { "id": "custom.displayMode", "value": "color-background-solid" },
               {
                 "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
-                    {
-                      "color": "green",
-                      "value": null
-                    },
-                    {
-                      "color": "yellow",
-                      "value": 5
-                    },
-                    {
-                      "color": "orange",
-                      "value": 10
-                    },
-                    {
-                      "color": "red",
-                      "value": 15
-                    }
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 5 },
+                    { "color": "orange", "value": 10 },
+                    { "color": "red", "value": 15 }
                   ]
                 }
               }
             ]
           },
           {
-            "matcher": {
-              "id": "byName",
-              "options": "probe_success"
-            },
+            "matcher": { "id": "byName", "options": "OK" },
             "properties": [
-              {
-                "id": "displayName",
-                "value": "OK"
-              },
-              {
-                "id": "custom.width",
-                "value": 60
-              },
+              { "id": "custom.width", "value": 60 },
+              { "id": "custom.displayMode", "value": "color-background-solid" },
               {
                 "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
-                    {
-                      "color": "red",
-                      "value": null
-                    },
-                    {
-                      "color": "green",
-                      "value": 1
-                    }
+                    { "color": "red", "value": null },
+                    { "color": "green", "value": 1 }
                   ]
                 }
               }
@@ -469,49 +278,24 @@
           }
         ]
       },
-      "gridPos": {
-        "h": 14,
-        "w": 24,
-        "x": 0,
-        "y": 5
-      },
-      "id": 7,
       "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
         "showHeader": true,
-        "sortBy": [
-          {
-            "desc": false,
-            "displayName": "Avg RTT"
-          }
-        ]
+        "sortBy": [{ "displayName": "Avg RTT", "desc": false }]
       },
-      "pluginVersion": "10.4.2",
       "targets": [
         {
-          "expr": "rate(cmping_response_duration_seconds_sum{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval]) / rate(cmping_response_duration_seconds_count{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval])",
+          "refId": "A",
+          "expr": "cmping_response_duration_seconds_sum{source=~\"$source\", destination=~\"$destination\"} / cmping_response_duration_seconds_count{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
-          "instant": true,
-          "legendFormat": "avg_rtt",
-          "refId": "A"
+          "instant": true
         },
         {
+          "refId": "B",
           "expr": "cmping_probe_success{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
-          "instant": true,
-          "legendFormat": "probe_success",
-          "refId": "B"
+          "instant": true
         }
       ],
-      "title": "Probe Results — Avg RTT",
       "transformations": [
         {
           "id": "merge",
@@ -521,647 +305,275 @@
           "id": "organize",
           "options": {
             "excludeByName": {
-              "Time": true,
-              "Time 1": true,
-              "Time 2": true,
-              "__name__": true,
-              "instance": true,
-              "job": true
+              "Time": true, "Time 1": true, "Time 2": true,
+              "__name__": true, "instance": true, "job": true
             },
             "renameByName": {
-              "Value": "avg_rtt",
-              "Value #avg_rtt": "avg_rtt",
-              "Value #probe_success": "probe_success"
+              "Value #A": "Avg RTT",
+              "Value #B": "OK"
             }
           }
         }
-      ],
-      "type": "table"
+      ]
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 19
-      },
-      "id": 8,
       "title": "Probe Status",
-      "type": "row"
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 19 },
+      "collapsed": false
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "title": "Failing Pairs Timeline",
       "description": "Shows only failing pairs (probe_success=0). Use source/destination filters above to inspect specific pairs.",
+      "type": "state-timeline",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 20 },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "continuous-GrYlRd"
-          },
-          "custom": {
-            "fillOpacity": 80,
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineWidth": 0,
-            "spanNulls": false
-          },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "red",
-                  "text": "FAIL"
-                }
-              },
-              "type": "value"
-            },
-            {
-              "options": {
-                "1": {
-                  "color": "green",
-                  "text": "OK"
-                }
-              },
-              "type": "value"
-            }
-          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
             ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 20
-      },
-      "id": 9,
-      "options": {
-        "alignValue": "center",
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "mergeValues": true,
-        "rowHeight": 0.8,
-        "showValue": "auto",
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "FAIL", "color": "red" } } },
+            { "type": "value", "options": { "1": { "text": "OK", "color": "green" } } }
+          ],
+          "custom": { "fillOpacity": 80 }
         }
+      },
+      "options": {
+        "showValue": "auto",
+        "alignValue": "center",
+        "mergeValues": true,
+        "rowHeight": 0.8
       },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "fdiuq9rm0h91ce"
-          },
-          "editorMode": "code",
           "expr": "cmping_probe_success{source=~\"$source\", destination=~\"$destination\"} == 0",
-          "legendFormat": "{{source}} -> {{destination}}",
-          "range": true,
-          "refId": "A"
+          "legendFormat": "{{source}} -> {{destination}}"
         }
-      ],
-      "title": "Failing Pairs Timeline",
-      "type": "state-timeline"
+      ]
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 30
-      },
-      "id": 10,
       "title": "Latency",
-      "type": "row"
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 30 },
+      "collapsed": false
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "description": "Smokeping-style latency bands: p10, p50, p90, p99. Select specific source/destination from the dropdowns above.",
+      "title": "Self-probe RTT — $relay",
+      "description": "Smokeping-style RTT for a single relay probing itself (source=destination=$relay). Select a relay from the top-right dropdown. Shows per-relay delivery latency independent of cross-relay variation.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 31 },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "unit": "s",
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
             "fillOpacity": 20,
-            "gradientMode": "scheme",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "smooth",
             "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
+            "drawStyle": "line",
+            "gradientMode": "scheme",
             "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "lineInterpolation": "smooth"
           },
-          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 5
-              },
-              {
-                "color": "red",
-                "value": 30
-              }
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 30 }
             ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 31
-      },
-      "id": 11,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
+          }
         }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(cmping_response_duration_seconds_bucket{source=~\"$relay\", destination=~\"$relay\"}[$__rate_interval])))",
+          "legendFormat": "p99"
+        },
+        {
+          "expr": "histogram_quantile(0.90, sum by (le) (rate(cmping_response_duration_seconds_bucket{source=~\"$relay\", destination=~\"$relay\"}[$__rate_interval])))",
+          "legendFormat": "p90"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(cmping_response_duration_seconds_bucket{source=~\"$relay\", destination=~\"$relay\"}[$__rate_interval])))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.10, sum by (le) (rate(cmping_response_duration_seconds_bucket{source=~\"$relay\", destination=~\"$relay\"}[$__rate_interval])))",
+          "legendFormat": "p10"
+        }
+      ]
+    },
+    {
+      "title": "RTT Quantiles — $source -> $destination",
+      "description": "Smokeping-style latency bands: p10, p50, p90, p99. Select specific source/destination from the dropdowns above.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 41 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 1,
+            "drawStyle": "line",
+            "gradientMode": "scheme",
+            "spanNulls": false,
+            "lineInterpolation": "smooth"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 30 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] }
       },
       "targets": [
         {
           "expr": "histogram_quantile(0.99, sum by (le) (rate(cmping_response_duration_seconds_bucket{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval])))",
-          "legendFormat": "p99",
-          "refId": "A"
+          "legendFormat": "p99"
         },
         {
           "expr": "histogram_quantile(0.90, sum by (le) (rate(cmping_response_duration_seconds_bucket{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval])))",
-          "legendFormat": "p90",
-          "refId": "B"
+          "legendFormat": "p90"
         },
         {
           "expr": "histogram_quantile(0.50, sum by (le) (rate(cmping_response_duration_seconds_bucket{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval])))",
-          "legendFormat": "p50",
-          "refId": "C"
+          "legendFormat": "p50"
         },
         {
           "expr": "histogram_quantile(0.10, sum by (le) (rate(cmping_response_duration_seconds_bucket{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval])))",
-          "legendFormat": "p10",
-          "refId": "D"
+          "legendFormat": "p10"
         }
-      ],
-      "title": "RTT Quantiles — $source ->$destination",
-      "type": "timeseries"
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "description": "Average round-trip time per relay pair over time.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 41
-      },
-      "id": 12,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "fdiuq9rm0h91ce"
-          },
-          "editorMode": "code",
-          "expr": "rate(cmping_response_duration_seconds_sum{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval]) / rate(cmping_response_duration_seconds_count{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval])",
-          "legendFormat": "{{source}} -> {{destination}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
       "title": "Per-Pair Average RTT",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 51
-      },
-      "id": 13,
-      "title": "Errors & Setup",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "description": "Rate of failed probe rounds per relay pair.",
+      "description": "Average round-trip time per relay pair over time.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 51 },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "unit": "s",
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "bars",
-            "fillOpacity": 30,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
+            "fillOpacity": 0,
             "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "ops"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 52
-      },
-      "id": 14,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
+            "drawStyle": "line",
+            "spanNulls": false
+          }
         }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "lastNotNull"] }
       },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "fdiuq9rm0h91ce"
-          },
-          "editorMode": "code",
-          "expr": "rate(cmping_send_errors_total{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval]) > 0",
-          "legendFormat": "{{source}} -> {{destination}}",
-          "range": true,
-          "refId": "A"
+          "expr": "rate(cmping_response_duration_seconds_sum{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval]) / rate(cmping_response_duration_seconds_count{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval])",
+          "legendFormat": "{{source}} -> {{destination}}"
         }
-      ],
-      "title": "Send Errors Rate",
-      "type": "timeseries"
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "description": "Time spent setting up accounts on each relay pair. High on first run, low on subsequent runs.",
+      "title": "Errors & Setup",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 61 },
+      "collapsed": false
+    },
+    {
+      "title": "Send Errors (cumulative)",
+      "description": "Pairs that have accumulated send errors (probe round failures). Shows total error count, not rate — useful for both one-shot and continuous runs.",
+      "type": "table",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 62 },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
+          "custom": { "filterable": true, "displayMode": "color-background-solid" },
           "thresholds": {
-            "mode": "absolute",
             "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
             ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "source" },
+            "properties": [{ "id": "custom.width", "value": 200 }]
           },
-          "unit": "s"
-        },
-        "overrides": []
+          {
+            "matcher": { "id": "byName", "options": "destination" },
+            "properties": [{ "id": "custom.width", "value": 200 }]
+          }
+        ]
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 52
-      },
-      "id": 15,
       "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true,
-          "sortBy": "Last *",
-          "sortDesc": false
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
+        "showHeader": true,
+        "sortBy": [{ "displayName": "Value", "desc": true }]
+      },
+      "targets": [
+        {
+          "expr": "cmping_send_errors_total{source=~\"$source\", destination=~\"$destination\"} > 0",
+          "format": "table",
+          "instant": true
         }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true, "instance": true, "job": true },
+            "renameByName": { "Value": "Errors" }
+          }
+        }
+      ]
+    },
+    {
+      "title": "Account Setup Time",
+      "description": "Time spent setting up accounts on each relay pair. High on first run, low on subsequent runs.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 62 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "drawStyle": "line",
+            "spanNulls": false
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] }
       },
       "targets": [
         {
           "expr": "cmping_account_setup_seconds{source=~\"$source\", destination=~\"$destination\"}",
-          "legendFormat": "{{source}} -> {{destination}}",
-          "refId": "A"
+          "legendFormat": "{{source}} -> {{destination}}"
         }
-      ],
-      "title": "Account Setup Time",
-      "type": "timeseries"
+      ]
     }
   ],
-  "refresh": "5m",
   "schemaVersion": 39,
-  "tags": [
-    "chatmail",
-    "cmping",
-    "interop"
-  ],
-  "templating": {
-    "list": [
-      {
-        "current": {
-          "selected": false,
-          "text": "prometheus",
-          "value": "fdiuq9rm0h91ce"
-        },
-        "hide": 0,
-        "includeAll": false,
-        "multi": false,
-        "name": "datasource",
-        "options": [],
-        "query": "prometheus",
-        "refresh": 1,
-        "regex": "",
-        "skipUrlSync": false,
-        "type": "datasource"
-      },
-      {
-        "current": {
-          "selected": true,
-          "text": [
-            "nine.testrun.org"
-          ],
-          "value": [
-            "nine.testrun.org"
-          ]
-        },
-        "datasource": {
-          "type": "prometheus",
-          "uid": "${datasource}"
-        },
-        "definition": "",
-        "hide": 0,
-        "includeAll": true,
-        "multi": true,
-        "name": "source",
-        "options": [],
-        "query": "label_values(cmping_probe_success, source)",
-        "refresh": 2,
-        "regex": "",
-        "skipUrlSync": false,
-        "sort": 0,
-        "type": "query"
-      },
-      {
-        "current": {
-          "selected": true,
-          "text": [
-            "nine.testrun.org"
-          ],
-          "value": [
-            "nine.testrun.org"
-          ]
-        },
-        "datasource": {
-          "type": "prometheus",
-          "uid": "${datasource}"
-        },
-        "definition": "",
-        "hide": 0,
-        "includeAll": true,
-        "multi": true,
-        "name": "destination",
-        "options": [],
-        "query": "label_values(cmping_probe_success, destination)",
-        "refresh": 2,
-        "regex": "",
-        "skipUrlSync": false,
-        "sort": 0,
-        "type": "query"
-      }
-    ]
-  },
-  "time": {
-    "from": "now-1h",
-    "to": "now"
-  },
-  "timepicker": {},
-  "timezone": "browser",
-  "title": "Chatmail Relay Interop",
-  "uid": "chatmail-prober",
-  "version": 1,
-  "weekStart": ""
+  "version": 3
 }
