@@ -2,7 +2,15 @@
 
 import logging
 
-from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, REGISTRY
+from prometheus_client import (
+    CollectorRegistry, Counter, Gauge, Histogram, REGISTRY,
+    disable_created_metrics,
+)
+
+# Suppress the _created timestamp lines added by prometheus_client for each
+# counter and histogram series — they double the textfile size and are not
+# useful for node_exporter's textfile collector.
+disable_created_metrics()
 
 log = logging.getLogger(__name__)
 
@@ -16,20 +24,6 @@ LABELS = ["source", "destination"]
 # own process metrics. The default REGISTRY (with process collectors)
 # is still used for the HTTP /metrics endpoint.
 CMPING_REGISTRY = CollectorRegistry()
-
-requests_total = Counter(
-    "cmping_requests_total",
-    "Total number of ping messages sent",
-    LABELS,
-    registry=CMPING_REGISTRY,
-)
-
-responses_total = Counter(
-    "cmping_responses_total",
-    "Total number of ping messages successfully received",
-    LABELS,
-    registry=CMPING_REGISTRY,
-)
 
 response_duration = Histogram(
     "cmping_response_duration_seconds",
@@ -70,8 +64,6 @@ def update_metrics(result):
         probe_success.labels(**labels).set(0)
         return
 
-    requests_total.labels(**labels).inc(result.sent)
-    responses_total.labels(**labels).inc(result.received)
     probe_success.labels(**labels).set(1 if result.loss == 0 else 0)
     account_setup_seconds.labels(**labels).set(result.account_setup_time)
 

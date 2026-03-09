@@ -1,7 +1,7 @@
 """Tests for Prometheus metric updates from ProbeResults."""
 
 import pytest
-from prometheus_client import REGISTRY, CollectorRegistry
+from prometheus_client import CollectorRegistry
 
 from chatmail_prober.prober import ProbeResult
 from chatmail_prober import metrics as metrics_mod
@@ -14,12 +14,6 @@ def _fresh_metrics(monkeypatch):
     labels = ["source", "destination"]
 
     new = {
-        "requests_total": metrics_mod.Counter(
-            "cmping_requests_total_test", "test", labels, registry=registry,
-        ),
-        "responses_total": metrics_mod.Counter(
-            "cmping_responses_total_test", "test", labels, registry=registry,
-        ),
         "response_duration": metrics_mod.Histogram(
             "cmping_response_duration_seconds_test", "test", labels,
             buckets=metrics_mod.RTT_BUCKETS, registry=registry,
@@ -44,15 +38,6 @@ def _labels():
 
 
 class TestUpdateMetricsSuccess:
-    def test_counters_increment(self):
-        result = ProbeResult("a.example", "b.example", sent=10, received=8, loss=20.0,
-                             rtts_ms=[100, 200, 300])
-        metrics_mod.update_metrics(result)
-
-        lbl = _labels()
-        assert metrics_mod.requests_total.labels(**lbl)._value.get() == 10
-        assert metrics_mod.responses_total.labels(**lbl)._value.get() == 8
-
     def test_histogram_observations_converted_to_seconds(self):
         result = ProbeResult("a.example", "b.example", sent=3, received=3, loss=0.0,
                              rtts_ms=[500.0, 1500.0, 250.0])
@@ -60,7 +45,6 @@ class TestUpdateMetricsSuccess:
 
         lbl = _labels()
         h = metrics_mod.response_duration.labels(**lbl)
-        # 3 observations
         assert h._sum.get() == pytest.approx(2.25, abs=0.001)  # (0.5 + 1.5 + 0.25)
 
     def test_probe_success_set_to_one_on_zero_loss(self):
@@ -79,14 +63,15 @@ class TestUpdateMetricsSuccess:
         metrics_mod.update_metrics(result)
         assert metrics_mod.account_setup_seconds.labels(**_labels())._value.get() == pytest.approx(1.234)
 
-    def test_counters_accumulate_across_updates(self):
+    def test_histogram_accumulates_across_updates(self):
         lbl = _labels()
         for _ in range(3):
-            result = ProbeResult("a.example", "b.example", sent=5, received=4, loss=20.0)
+            result = ProbeResult("a.example", "b.example", sent=5, received=4, loss=20.0,
+                                 rtts_ms=[1000.0, 2000.0])
             metrics_mod.update_metrics(result)
 
-        assert metrics_mod.requests_total.labels(**lbl)._value.get() == 15
-        assert metrics_mod.responses_total.labels(**lbl)._value.get() == 12
+        h = metrics_mod.response_duration.labels(**lbl)
+        assert h._sum.get() == pytest.approx(9.0)  # 3 rounds * (1.0 + 2.0)s
 
 
 class TestUpdateMetricsError:
@@ -102,15 +87,13 @@ class TestUpdateMetricsError:
         metrics_mod.update_metrics(result)
         assert metrics_mod.probe_success.labels(**_labels())._value.get() == 0.0
 
-    def test_error_does_not_touch_request_counters(self):
+    def test_error_does_not_observe_histogram(self):
         result = ProbeResult("a.example", "b.example", error="boom")
         metrics_mod.update_metrics(result)
 
         lbl = _labels()
-        # Counter should not have been created for these labels
-        # (accessing .labels() creates it, so check the underlying value)
-        assert metrics_mod.requests_total.labels(**lbl)._value.get() == 0
-        assert metrics_mod.responses_total.labels(**lbl)._value.get() == 0
+        h = metrics_mod.response_duration.labels(**lbl)
+        assert h._sum.get() == 0.0
 
 
 class TestUpdateMetricsMultiplePairs:

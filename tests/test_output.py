@@ -18,8 +18,8 @@ class TestWriteTextfile:
         write_textfile(str(out))
 
         content = out.read_text()
-        assert "cmping_requests_total" in content
         assert "cmping_response_duration_seconds" in content
+        assert "cmping_probe_success" in content
         assert content.endswith("\n")
 
     def test_atomic_write_no_partial_file(self, tmp_path):
