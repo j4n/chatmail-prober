@@ -58,7 +58,7 @@ def run_probe(
     accounts_dir should be a per-worker directory so the worker's single
     thread accesses it sequentially, avoiding deltachat-rpc-server DB locks.
     """
-    pair_dir = Path(accounts_dir).expanduser()
+    accounts_dir = Path(accounts_dir).expanduser()
 
     args = argparse.Namespace(
         relay1=source,
@@ -71,7 +71,7 @@ def run_probe(
     )
 
     try:
-        pinger = perform_ping(args, accounts_dir=pair_dir, timeout=timeout)
+        pinger = perform_ping(args, accounts_dir=accounts_dir, timeout=timeout)
         return ProbeResult(
             source=source,
             destination=dest,
