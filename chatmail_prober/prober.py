@@ -48,16 +48,17 @@ class ProbeResult:
 def run_probe(
     source: str,
     dest: str,
-    count: int = 10,
-    interval: float = 1.1,
-    cache_dir: str | Path = "~/.cache/chatmail-prober",
+    count: int = 5,
+    interval: float = 0.1,
+    accounts_dir: str | Path = "~/.cache/chatmail-prober/worker-0",
+    timeout: float = 60.0,
 ) -> ProbeResult:
     """Run a single cmping probe between two relays.
 
-    Uses a per-pair accounts directory so multiple probes can run
-    concurrently without hitting deltachat-rpc-server's DB lock.
+    accounts_dir should be a per-worker directory so the worker's single
+    thread accesses it sequentially, avoiding deltachat-rpc-server DB locks.
     """
-    pair_dir = Path(cache_dir).expanduser() / f"{source}--{dest}"
+    pair_dir = Path(accounts_dir).expanduser()
 
     args = argparse.Namespace(
         relay1=source,
@@ -70,7 +71,7 @@ def run_probe(
     )
 
     try:
-        pinger = perform_ping(args, accounts_dir=pair_dir)
+        pinger = perform_ping(args, accounts_dir=pair_dir, timeout=timeout)
         return ProbeResult(
             source=source,
             destination=dest,

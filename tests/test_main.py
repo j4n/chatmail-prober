@@ -45,11 +45,17 @@ class TestParseArgs:
         assert args.port == 0
         assert args.textfile is None
         assert args.interval == 900
-        assert args.count == 10
-        assert args.ping_interval == 1.1
-        assert args.timeout == 120
+        assert args.count == 5
+        assert args.ping_interval == 0.1
+        assert args.timeout == 60
         assert args.workers == 5
         assert args.once is False
+        assert args.verbose == 0
+        assert args.quiet is False
+
+    def test_quiet_flag(self):
+        args = parse_args(["--relays", "r.txt", "-q"])
+        assert args.quiet is True
         assert args.verbose == 0
 
     def test_all_flags(self):

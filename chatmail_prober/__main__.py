@@ -6,10 +6,14 @@ as Prometheus metrics.
 """
 
 import argparse
+import builtins
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+# Save real print before prober.py's cmping import monkey-patches builtins.print.
+_print = builtins.print
 
 from .metrics import update_metrics
 from .output import start_exporter_server, write_textfile
@@ -62,20 +66,20 @@ def parse_args(argv=None):
     parser.add_argument(
         "--count",
         type=int,
-        default=10,
-        help="number of pings per pair per round (default: 10)",
+        default=5,
+        help="number of pings per pair per round (default: 5)",
     )
     parser.add_argument(
         "--ping-interval",
         type=float,
-        default=1.1,
-        help="seconds between individual pings within a probe (default: 1.1)",
+        default=0.1,
+        help="seconds between individual pings within a probe (default: 0.1)",
     )
     parser.add_argument(
         "--timeout",
         type=int,
-        default=120,
-        help="per-pair timeout in seconds (default: 120)",
+        default=60,
+        help="per-pair receive timeout in seconds (default: 60)",
     )
     parser.add_argument(
         "--workers",
@@ -97,40 +101,137 @@ def parse_args(argv=None):
         "-v", "--verbose",
         action="count",
         default=0,
-        help="increase logging verbosity",
+        help="increase logging verbosity (show debug messages)",
+    )
+    parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="suppress progress output (only show warnings/errors)",
+    )
+    parser.add_argument(
+        "--scan",
+        action="store_true",
+        help="run self-probes on all relays, print ranked by RTT, then exit",
+    )
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=10,
+        help="number of fastest relays to highlight in --scan output (default: 10)",
     )
     return parser.parse_args(argv)
 
 
-def run_round(relays, args):
-    """Run one complete probe round across all relay pairs."""
+def scan_relays(relays, args):
+    """Self-probe all relays in parallel, print ranked by avg RTT, return sorted list."""
+    log.info("Scanning %d relays...", len(relays))
+    cache_dir = Path(args.cache_dir).expanduser()
+
+    results = {}
+    for r in relays:
+        log.info("Probing %s...", r)
+        results[r] = run_probe(r, r, args.count, args.ping_interval,
+                               str(cache_dir / "scan"), args.timeout)
+
+    ranked = sorted(
+        relays,
+        key=lambda r: (
+            sum(results[r].rtts_ms) / len(results[r].rtts_ms)
+            if results[r].rtts_ms else float("inf")
+        ),
+    )
+
+    _print("\nScan results (fastest first):\n")
+    _print(f"  {'Rank':<5} {'Relay':<40} {'Avg RTT':>10} {'Loss':>8} {'Samples':>8}")
+    _print(f"  {'-'*5} {'-'*40} {'-'*10} {'-'*8} {'-'*8}")
+    for i, relay in enumerate(ranked, 1):
+        r = results[relay]
+        if r.error:
+            _print(f"  {i:<5} {relay:<40} {'DEAD':>10} {'':>8} {'':>8}")
+        else:
+            avg = sum(r.rtts_ms) / len(r.rtts_ms) if r.rtts_ms else 0
+            marker = " <--" if i <= args.top else ""
+            _print(f"  {i:<5} {relay:<40} {avg:>9.0f}ms {r.loss:>7.1f}% {len(r.rtts_ms):>8}{marker}")
+    _print()
+
+    return [r for r in ranked if not results[r].error]
+
+
+def check_relays_alive(relays, args):
+    """Run a single self-probe (relay→itself, count=1) for each relay in parallel.
+
+    Returns the list of relays that succeeded, in original order.
+    Dead relays are logged as warnings and excluded from the matrix.
+    """
+    log.info("Checking %d relays with self-probe...", len(relays))
+    cache_dir = Path(args.cache_dir).expanduser()
+
+    with ThreadPoolExecutor(max_workers=len(relays)) as pool:
+        futures = {
+            pool.submit(run_probe, r, r, 1, args.ping_interval, str(cache_dir / "alive-check")): r
+            for r in relays
+        }
+        dead = []
+        for future in as_completed(futures):
+            relay = futures[future]
+            result = future.result()
+            if result.error:
+                log.warning("DEAD %s: %s", relay, result.error)
+                dead.append(relay)
+            else:
+                log.info("OK   %s (%.0fms)", relay, result.rtts_ms[0] if result.rtts_ms else 0)
+
+    alive = [r for r in relays if r not in dead]
+    if dead:
+        log.warning("%d relay(s) unreachable, skipping from matrix: %s", len(dead), ", ".join(dead))
+    return alive
+
+
+def run_round(relays, args, executors):
+    """Run one complete probe round across all relay pairs.
+
+    Pairs are distributed round-robin across the per-worker executors so each
+    worker's single thread accesses its own accounts dir sequentially, avoiding
+    deltachat-rpc-server DB lock contention.
+    """
     pairs = [(s, d) for s in relays for d in relays]
     log.info("Starting probe round: %d pairs, %d workers", len(pairs), args.workers)
     round_start = time.time()
 
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = {
-            pool.submit(
-                run_probe, src, dst, args.count, args.ping_interval, args.cache_dir
-            ): (src, dst)
-            for src, dst in pairs
-        }
-        for future in as_completed(futures):
-            src, dst = futures[future]
-            result = future.result()
-            update_metrics(result)
-            if result.error:
-                log.warning("%s -> %s: ERROR %s", src, dst, result.error)
-            else:
-                avg_ms = (
-                    sum(result.rtts_ms) / len(result.rtts_ms)
-                    if result.rtts_ms
-                    else 0
-                )
-                log.info(
-                    "%s -> %s: %d/%d received, avg %.0fms, loss %.1f%%",
-                    src, dst, result.received, result.sent, avg_ms, result.loss,
-                )
+    cache_dir = Path(args.cache_dir).expanduser()
+
+    # Partition pairs round-robin: pair i goes to worker i % workers
+    worker_pairs = [[] for _ in range(args.workers)]
+    for i, pair in enumerate(pairs):
+        worker_pairs[i % args.workers].append(pair)
+
+    all_futures = {}
+    for worker_id, executor in enumerate(executors):
+        worker_dir = cache_dir / f"worker-{worker_id}"
+        for src, dst in worker_pairs[worker_id]:
+            future = executor.submit(
+                run_probe, src, dst, args.count, args.ping_interval, str(worker_dir), args.timeout,
+            )
+            all_futures[future] = (src, dst)
+
+    completed = 0
+    for future in as_completed(all_futures):
+        completed += 1
+        src, dst = all_futures[future]
+        result = future.result()
+        update_metrics(result)
+        if result.error:
+            log.warning("[%d/%d] %s -> %s: ERROR %s", completed, len(pairs), src, dst, result.error)
+        else:
+            avg_ms = (
+                sum(result.rtts_ms) / len(result.rtts_ms)
+                if result.rtts_ms
+                else 0
+            )
+            log.info(
+                "[%d/%d] %s -> %s: %d/%d received, avg %.0fms, loss %.1f%%",
+                completed, len(pairs), src, dst, result.received, result.sent, avg_ms, result.loss,
+            )
 
     elapsed = time.time() - round_start
     log.info("Probe round complete in %.1fs", elapsed)
@@ -140,47 +241,70 @@ def run_round(relays, args):
 def main(argv=None):
     args = parse_args(argv)
 
-    level = logging.WARNING
-    if args.verbose >= 2:
-        level = logging.DEBUG
-    elif args.verbose >= 1:
-        level = logging.INFO
+    # Root logger stays at WARNING — prevents deltachat-rpc-client's internal
+    # event logging from flooding the output when -v is used.
     logging.basicConfig(
-        level=level,
+        level=logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    # Our logger defaults to INFO so progress is always visible.
+    if args.quiet:
+        log.setLevel(logging.WARNING)
+    elif args.verbose >= 1:
+        log.setLevel(logging.DEBUG)
+    else:
+        log.setLevel(logging.INFO)
+
     relays = read_relay_list(args.relays)
     log.info("Loaded %d relays: %s", len(relays), ", ".join(relays))
+
+    cache_dir = Path(args.cache_dir).expanduser()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.scan:
+        scan_relays(relays, args)
+        return
+
     log.info(
         "Pairs: %d, count: %d, interval: %ds, workers: %d",
         len(relays) ** 2, args.count, args.interval, args.workers,
     )
 
-    cache_dir = Path(args.cache_dir).expanduser()
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    relays = check_relays_alive(relays, args)
+    if not relays:
+        raise SystemExit("No reachable relays -- aborting")
+    log.info("%d relay(s) alive, starting matrix probe", len(relays))
 
     if args.port:
         start_exporter_server(args.port)
 
-    while True:
-        elapsed = run_round(relays, args)
+    # Create executors once; reused across rounds to keep worker threads warm.
+    executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
+    try:
+        while True:
+            elapsed = run_round(relays, args, executors)
 
-        if args.textfile:
-            write_textfile(args.textfile)
+            if args.textfile:
+                write_textfile(args.textfile)
 
-        if args.once:
-            break
+            if args.once:
+                break
 
-        remaining = max(0, args.interval - elapsed)
-        if remaining == 0:
-            log.warning(
-                "Probe round took %.0fs, exceeds interval %ds — starting next immediately",
-                elapsed, args.interval,
-            )
-        else:
-            log.info("Sleeping %.0fs until next round", remaining)
-            time.sleep(remaining)
+            remaining = max(0, args.interval - elapsed)
+            if remaining == 0:
+                log.warning(
+                    "Probe round took %.0fs, exceeds interval %ds — starting next immediately",
+                    elapsed, args.interval,
+                )
+            else:
+                log.info("Sleeping %.0fs until next round", remaining)
+                time.sleep(remaining)
+    except KeyboardInterrupt:
+        log.info("Interrupted")
+    finally:
+        for ex in executors:
+            ex.shutdown(wait=False)
 
 
 if __name__ == "__main__":
