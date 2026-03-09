@@ -5,21 +5,27 @@ and exposes round-trip time histograms, counters, and success gauges
 as Prometheus metrics.
 """
 
-import argparse
 import builtins
-import logging
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 
 # Save real print before prober.py's cmping import monkey-patches builtins.print.
 _print = builtins.print
+
+import argparse
+import logging
+import resource
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 from .metrics import update_metrics
 from .output import start_exporter_server, write_textfile
 from .prober import run_probe
 
 log = logging.getLogger("chatmail_prober")
+
+
+def _avg_ms(rtts_ms):
+    return sum(rtts_ms) / len(rtts_ms) if rtts_ms else 0.0
 
 
 def read_relay_list(path):
@@ -42,8 +48,7 @@ def parse_args(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--relays",
-        required=True,
+        "relays",
         help="path to relay list file (one domain per line)",
     )
     parser.add_argument(
@@ -123,7 +128,7 @@ def parse_args(argv=None):
 
 
 def scan_relays(relays, args):
-    """Self-probe all relays in parallel, print ranked by avg RTT, return sorted list."""
+    """Self-probe all relays sequentially, print ranked by avg RTT, then exit."""
     log.info("Scanning %d relays...", len(relays))
     cache_dir = Path(args.cache_dir).expanduser()
 
@@ -135,10 +140,7 @@ def scan_relays(relays, args):
 
     ranked = sorted(
         relays,
-        key=lambda r: (
-            sum(results[r].rtts_ms) / len(results[r].rtts_ms)
-            if results[r].rtts_ms else float("inf")
-        ),
+        key=lambda r: _avg_ms(results[r].rtts_ms) if results[r].rtts_ms else float("inf"),
     )
 
     _print("\nScan results (fastest first):\n")
@@ -149,12 +151,9 @@ def scan_relays(relays, args):
         if r.error:
             _print(f"  {i:<5} {relay:<40} {'DEAD':>10} {'':>8} {'':>8}")
         else:
-            avg = sum(r.rtts_ms) / len(r.rtts_ms) if r.rtts_ms else 0
             marker = " <--" if i <= args.top else ""
-            _print(f"  {i:<5} {relay:<40} {avg:>9.0f}ms {r.loss:>7.1f}% {len(r.rtts_ms):>8}{marker}")
+            _print(f"  {i:<5} {relay:<40} {_avg_ms(r.rtts_ms):>9.0f}ms {r.loss:>7.1f}% {len(r.rtts_ms):>8}{marker}")
     _print()
-
-    return [r for r in ranked if not results[r].error]
 
 
 def check_relays_alive(relays, args):
@@ -168,16 +167,18 @@ def check_relays_alive(relays, args):
 
     with ThreadPoolExecutor(max_workers=len(relays)) as pool:
         futures = {
-            pool.submit(run_probe, r, r, 1, args.ping_interval, str(cache_dir / "alive-check")): r
+            pool.submit(run_probe, r, r, 1, args.ping_interval,
+                        str(cache_dir / "alive-check"), args.timeout): r
             for r in relays
         }
-        dead = []
+        dead = set()
         for future in as_completed(futures):
             relay = futures[future]
             result = future.result()
             if result.error:
                 log.warning("DEAD %s: %s", relay, result.error)
-                dead.append(relay)
+                dead.add(relay)
+                update_metrics(result)  # records probe_success=0 in textfile
             else:
                 log.info("OK   %s (%.0fms)", relay, result.rtts_ms[0] if result.rtts_ms else 0)
 
@@ -223,14 +224,10 @@ def run_round(relays, args, executors):
         if result.error:
             log.warning("[%d/%d] %s -> %s: ERROR %s", completed, len(pairs), src, dst, result.error)
         else:
-            avg_ms = (
-                sum(result.rtts_ms) / len(result.rtts_ms)
-                if result.rtts_ms
-                else 0
-            )
             log.info(
                 "[%d/%d] %s -> %s: %d/%d received, avg %.0fms, loss %.1f%%",
-                completed, len(pairs), src, dst, result.received, result.sent, avg_ms, result.loss,
+                completed, len(pairs), src, dst, result.received, result.sent,
+                _avg_ms(result.rtts_ms), result.loss,
             )
 
     elapsed = time.time() - round_start
@@ -255,6 +252,16 @@ def main(argv=None):
         log.setLevel(logging.DEBUG)
     else:
         log.setLevel(logging.INFO)
+
+    # Raise the fd soft limit to the hard limit so large relay matrices
+    # don't hit the default 1024 cap when deltachat-rpc-server opens many DBs.
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft < hard:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+            log.debug("Raised fd limit %d -> %d", soft, hard)
+    except (ValueError, OSError):
+        pass
 
     relays = read_relay_list(args.relays)
     log.info("Loaded %d relays: %s", len(relays), ", ".join(relays))

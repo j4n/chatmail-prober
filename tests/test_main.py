@@ -40,7 +40,7 @@ class TestParseArgs:
             parse_args([])
 
     def test_defaults(self):
-        args = parse_args(["--relays", "relays.txt"])
+        args = parse_args(["relays.txt"])
         assert args.relays == "relays.txt"
         assert args.port == 0
         assert args.textfile is None
@@ -54,13 +54,13 @@ class TestParseArgs:
         assert args.quiet is False
 
     def test_quiet_flag(self):
-        args = parse_args(["--relays", "r.txt", "-q"])
+        args = parse_args(["r.txt", "-q"])
         assert args.quiet is True
         assert args.verbose == 0
 
     def test_all_flags(self):
         args = parse_args([
-            "--relays", "r.txt",
+            "r.txt",
             "--port", "0",
             "--textfile", "/tmp/out.prom",
             "--interval", "60",
