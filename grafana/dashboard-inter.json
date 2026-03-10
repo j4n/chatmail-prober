@@ -43,17 +43,17 @@
         "label": "From relay",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "query": "label_values(cmping_probe_success, source)",
+        "query": "label_values(cmping_probe_success{probe_type=\"cross\"}, source)",
         "refresh": 2,
-        "includeAll": false,
-        "multi": false,
-        "current": {}
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
       },
       {
         "name": "destination",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "query": "label_values(cmping_probe_success, destination)",
+        "query": "label_values(cmping_probe_success{probe_type=\"cross\"}, destination)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -94,7 +94,7 @@
       },
       "targets": [
         {
-          "expr": "count(cmping_probe_success == 1) / count(cmping_probe_success)",
+          "expr": "count(cmping_probe_success{probe_type=\"cross\"} == 1) / count(cmping_probe_success{probe_type=\"cross\"})",
           "legendFormat": "success rate"
         }
       ]
@@ -118,7 +118,7 @@
       },
       "targets": [
         {
-          "expr": "count(cmping_probe_success)",
+          "expr": "count(cmping_probe_success{probe_type=\"cross\"})",
           "legendFormat": "pairs"
         }
       ]
@@ -146,7 +146,7 @@
       },
       "targets": [
         {
-          "expr": "count(cmping_probe_success == 0) or vector(0)",
+          "expr": "count(cmping_probe_success{probe_type=\"cross\"} == 0) or vector(0)",
           "legendFormat": "failed"
         }
       ]
@@ -175,17 +175,17 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum(rate(cmping_response_duration_seconds_bucket[$__rate_interval])) by (le))",
-          "legendFormat": "p50"
+          "expr": "avg(cmping_rtt_median_seconds{probe_type=\"cross\"})",
+          "legendFormat": "median"
         }
       ]
     },
     {
       "title": "RTT Matrix",
-      "description": "Avg RTT per (source, destination) pair. Green = fast, yellow = >1s, red = >10s. Failed pairs show no data (red null color).",
+      "description": "Median RTT per (source, destination) pair. Green = fast, yellow = >2s, red = >10s. Failed pairs show no data (red null color).",
       "type": "esnet-matrix-panel",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 32, "w": 24, "x": 0, "y": 5 },
+      "gridPos": { "h": 24, "w": 12, "x": 0, "y": 5 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -203,16 +203,16 @@
         "sourceField": "destination",
         "targetField": "source",
         "valueField": "Value",
-        "cellSize": 24,
-        "cellPadding": 2,
-        "txtLength": 20,
-        "txtSize": 12,
+        "cellSize": 18,
+        "cellPadding": 1,
+        "txtLength": 14,
+        "txtSize": 10,
         "nullColor": "#d44a3a",
         "defaultColor": "#d44a3a"
       },
       "targets": [
         {
-          "expr": "cmping_response_duration_seconds_sum{source=~\"$source\", destination=~\"$destination\"} / cmping_response_duration_seconds_count{source=~\"$source\", destination=~\"$destination\"}",
+          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true
         }
@@ -220,10 +220,10 @@
     },
     {
       "title": "Probe Results",
-      "description": "All pairs sorted by source. Quantiles use cumulative histogram (no rate needed — works for single-round runs too).",
+      "description": "All cross-relay pairs with current probe status, median RTT, and p90 RTT.",
       "type": "table",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 37 },
+      "gridPos": { "h": 24, "w": 12, "x": 12, "y": 5 },
       "fieldConfig": {
         "defaults": {
           "custom": { "filterable": true }
@@ -231,11 +231,11 @@
         "overrides": [
           {
             "matcher": { "id": "byName", "options": "source" },
-            "properties": [{ "id": "custom.width", "value": 200 }]
+            "properties": [{ "id": "custom.width", "value": 140 }]
           },
           {
             "matcher": { "id": "byName", "options": "destination" },
-            "properties": [{ "id": "custom.width", "value": 200 }]
+            "properties": [{ "id": "custom.width", "value": 140 }]
           },
           {
             "matcher": { "id": "byName", "options": "OK" },
@@ -255,7 +255,7 @@
             ]
           },
           {
-            "matcher": { "id": "byRegexp", "options": "^(Avg|p50|p90|p99)" },
+            "matcher": { "id": "byRegexp", "options": "^(Median|p90)" },
             "properties": [
               { "id": "unit", "value": "s" },
               { "id": "decimals", "value": 2 },
@@ -284,31 +284,19 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "cmping_probe_success{source=~\"$source\", destination=~\"$destination\"}",
+          "expr": "cmping_probe_success{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
           "format": "table",
           "instant": true
         },
         {
           "refId": "B",
-          "expr": "cmping_response_duration_seconds_sum{source=~\"$source\", destination=~\"$destination\"} / cmping_response_duration_seconds_count{source=~\"$source\", destination=~\"$destination\"}",
+          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
           "format": "table",
           "instant": true
         },
         {
           "refId": "C",
-          "expr": "histogram_quantile(0.50, sum by (le, source, destination) (cmping_response_duration_seconds_bucket{source=~\"$source\", destination=~\"$destination\"}))",
-          "format": "table",
-          "instant": true
-        },
-        {
-          "refId": "D",
-          "expr": "histogram_quantile(0.90, sum by (le, source, destination) (cmping_response_duration_seconds_bucket{source=~\"$source\", destination=~\"$destination\"}))",
-          "format": "table",
-          "instant": true
-        },
-        {
-          "refId": "E",
-          "expr": "histogram_quantile(0.99, sum by (le, source, destination) (cmping_response_duration_seconds_bucket{source=~\"$source\", destination=~\"$destination\"}))",
+          "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
           "format": "table",
           "instant": true
         }
@@ -320,24 +308,20 @@
           "options": {
             "excludeByName": {
               "Time": true, "Time 1": true, "Time 2": true, "Time 3": true,
-              "Time 4": true, "Time 5": true,
-              "__name__": true, "instance": true, "job": true
+              "__name__": true, "instance": true, "job": true,
+              "probe_type": true
             },
             "renameByName": {
               "Value #A": "OK",
-              "Value #B": "Avg",
-              "Value #C": "p50",
-              "Value #D": "p90",
-              "Value #E": "p99"
+              "Value #B": "Median",
+              "Value #C": "p90"
             },
             "indexByName": {
               "source": 0,
               "destination": 1,
               "OK": 2,
-              "Avg": 3,
-              "p50": 4,
-              "p90": 5,
-              "p99": 6
+              "Median": 3,
+              "p90": 4
             }
           }
         }
@@ -346,7 +330,7 @@
     {
       "title": "Probe Status",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 53 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 29 },
       "collapsed": false
     },
     {
@@ -354,7 +338,7 @@
       "description": "Shows only failing pairs (probe_success=0). States are extended across gaps between probe rounds.",
       "type": "state-timeline",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 54 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 30 },
       "fieldConfig": {
         "defaults": {
           "thresholds": {
@@ -379,7 +363,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_probe_success{source=~\"$source\", destination=~\"$destination\"} == 0",
+          "expr": "cmping_probe_success{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"} == 0",
           "legendFormat": "{{source}} -> {{destination}}"
         }
       ]
@@ -387,15 +371,15 @@
     {
       "title": "Latency",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 64 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 },
       "collapsed": false
     },
     {
-      "title": "RTT Quantiles — $source -> $destination",
-      "description": "Smokeping-style latency bands: p10, p50, p90, p99. Select specific source/destination from the dropdowns above.",
+      "title": "RTT Stats — $source -> $destination",
+      "description": "Median, p90, and standard deviation per pair. Select specific source/destination from the dropdowns above.",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 65 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 41 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -423,29 +407,25 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (le, source, destination) (rate(cmping_response_duration_seconds_bucket{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval])))",
-          "legendFormat": "p99 {{source}} -> {{destination}}"
-        },
-        {
-          "expr": "histogram_quantile(0.90, sum by (le, source, destination) (rate(cmping_response_duration_seconds_bucket{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval])))",
+          "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
           "legendFormat": "p90 {{source}} -> {{destination}}"
         },
         {
-          "expr": "histogram_quantile(0.50, sum by (le, source, destination) (rate(cmping_response_duration_seconds_bucket{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval])))",
-          "legendFormat": "p50 {{source}} -> {{destination}}"
+          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "legendFormat": "median {{source}} -> {{destination}}"
         },
         {
-          "expr": "histogram_quantile(0.10, sum by (le, source, destination) (rate(cmping_response_duration_seconds_bucket{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval])))",
-          "legendFormat": "p10 {{source}} -> {{destination}}"
+          "expr": "cmping_rtt_stddev_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "legendFormat": "stddev {{source}} -> {{destination}}"
         }
       ]
     },
     {
-      "title": "Per-Pair Average RTT",
-      "description": "Average round-trip time per relay pair over time.",
+      "title": "Per-Pair Median RTT",
+      "description": "Median round-trip time per relay pair over time.",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 75 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 51 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -463,7 +443,7 @@
       },
       "targets": [
         {
-          "expr": "rate(cmping_response_duration_seconds_sum{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval]) / rate(cmping_response_duration_seconds_count{source=~\"$source\", destination=~\"$destination\"}[$__rate_interval])",
+          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
           "legendFormat": "{{source}} -> {{destination}}"
         }
       ]
@@ -471,7 +451,7 @@
     {
       "title": "Errors & Setup",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 85 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 61 },
       "collapsed": false
     },
     {
@@ -479,7 +459,7 @@
       "description": "Pairs that have accumulated send errors. Shows total error count per pair.",
       "type": "table",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 86 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 62 },
       "fieldConfig": {
         "defaults": {
           "custom": { "filterable": true, "displayMode": "color-background-solid" },
@@ -493,11 +473,11 @@
         "overrides": [
           {
             "matcher": { "id": "byName", "options": "source" },
-            "properties": [{ "id": "custom.width", "value": 200 }]
+            "properties": [{ "id": "custom.width", "value": 140 }]
           },
           {
             "matcher": { "id": "byName", "options": "destination" },
-            "properties": [{ "id": "custom.width", "value": 200 }]
+            "properties": [{ "id": "custom.width", "value": 140 }]
           }
         ]
       },
@@ -507,7 +487,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_send_errors_total{source=~\"$source\", destination=~\"$destination\"} > 0",
+          "expr": "cmping_send_errors_total{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"} > 0",
           "format": "table",
           "instant": true
         }
@@ -516,7 +496,10 @@
         {
           "id": "organize",
           "options": {
-            "excludeByName": { "Time": true, "__name__": true, "instance": true, "job": true },
+            "excludeByName": {
+              "Time": true, "__name__": true, "instance": true, "job": true,
+              "probe_type": true
+            },
             "renameByName": { "Value": "Errors" }
           }
         }
@@ -527,7 +510,7 @@
       "description": "Time spent setting up accounts on each relay pair. High on first run, near-zero on subsequent runs.",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 86 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 62 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -545,7 +528,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_account_setup_seconds{source=~\"$source\", destination=~\"$destination\"}",
+          "expr": "cmping_account_setup_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
           "legendFormat": "{{source}} -> {{destination}}"
         }
       ]

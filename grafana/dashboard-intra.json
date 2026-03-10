@@ -42,7 +42,7 @@
         "label": "Relay",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "query": "label_values(cmping_probe_success, source)",
+        "query": "label_values(cmping_probe_success{probe_type=\"self\"}, source)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -76,7 +76,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (source) (cmping_probe_success{source=~\"$relay\", destination=~\"$relay\"}))",
+          "expr": "count(count by (source) (cmping_probe_success{source=~\"$relay\", probe_type=\"self\"}))",
           "legendFormat": "relays"
         }
       ]
@@ -105,7 +105,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (source) (max_over_time(cmping_probe_success{source=~\"$relay\", destination=~\"$relay\"}[$__rate_interval]) == 0) unless on(source) count by (source) (max_over_time(cmping_probe_success{source=~\"$relay\", destination=~\"$relay\"}[$__rate_interval]) > 0)) or vector(0)",
+          "expr": "count(cmping_probe_success{source=~\"$relay\", probe_type=\"self\"} == 0) or vector(0)",
           "legendFormat": "dead"
         }
       ]
@@ -134,17 +134,17 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum(rate(cmping_response_duration_seconds_bucket{source=~\"$relay\", destination=~\"$relay\"}[$__rate_interval])) by (le))",
-          "legendFormat": "p50"
+          "expr": "avg(cmping_rtt_median_seconds{source=~\"$relay\", probe_type=\"self\"})",
+          "legendFormat": "median"
         }
       ]
     },
     {
       "title": "Self-probe RTT per Relay",
-      "description": "Current avg RTT for each relay's self-probe (lifetime sum/count).",
+      "description": "Current median RTT and probe status for each relay's self-probe.",
       "type": "table",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 5 },
+      "gridPos": { "h": 12, "w": 12, "x": 0, "y": 5 },
       "fieldConfig": {
         "defaults": {
           "custom": { "filterable": true }
@@ -158,7 +158,7 @@
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Avg RTT" },
+            "matcher": { "id": "byName", "options": "Median RTT" },
             "properties": [
               { "id": "unit", "value": "s" },
               { "id": "decimals", "value": 2 },
@@ -198,18 +198,18 @@
       },
       "options": {
         "showHeader": true,
-        "sortBy": [{ "displayName": "Avg RTT", "desc": false }]
+        "sortBy": [{ "displayName": "Median RTT", "desc": false }]
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "cmping_response_duration_seconds_sum{source=~\"$relay\", destination=~\"$relay\"} / cmping_response_duration_seconds_count{source=~\"$relay\", destination=~\"$relay\"}",
+          "expr": "cmping_rtt_median_seconds{source=~\"$relay\", probe_type=\"self\"}",
           "format": "table",
           "instant": true
         },
         {
           "refId": "B",
-          "expr": "cmping_probe_success{source=~\"$relay\", destination=~\"$relay\"}",
+          "expr": "cmping_probe_success{source=~\"$relay\", probe_type=\"self\"}",
           "format": "table",
           "instant": true
         }
@@ -222,10 +222,10 @@
             "excludeByName": {
               "Time": true, "Time 1": true, "Time 2": true,
               "__name__": true, "instance": true, "job": true,
-              "destination": true
+              "destination": true, "probe_type": true
             },
             "renameByName": {
-              "Value #A": "Avg RTT",
+              "Value #A": "Median RTT",
               "Value #B": "OK"
             }
           }
@@ -233,17 +233,11 @@
       ]
     },
     {
-      "title": "Health — $relay relays monitored",
-      "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
-      "collapsed": false
-    },
-    {
       "title": "Relay Health Timeline",
       "description": "One row per relay. Self-probe success (green) or failure (red) over time. States are extended across gaps between probe rounds.",
       "type": "state-timeline",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 16 },
+      "gridPos": { "h": 12, "w": 12, "x": 12, "y": 5 },
       "fieldConfig": {
         "defaults": {
           "thresholds": {
@@ -271,7 +265,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_probe_success{source=~\"$relay\", destination=~\"$relay\"}",
+          "expr": "cmping_probe_success{source=~\"$relay\", probe_type=\"self\"}",
           "legendFormat": "{{source}}"
         }
       ]
@@ -279,15 +273,15 @@
     {
       "title": "Latency",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
       "collapsed": false
     },
     {
-      "title": "Self-probe p50 RTT — all relays",
+      "title": "Self-probe Median RTT — all relays",
       "description": "Median RTT per relay for self-probes. Lines are extended across probe interval gaps.",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 29 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 18 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -305,17 +299,17 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (le, source) (rate(cmping_response_duration_seconds_bucket{source=~\"$relay\", destination=~\"$relay\"}[$__rate_interval])))",
+          "expr": "cmping_rtt_median_seconds{source=~\"$relay\", probe_type=\"self\"}",
           "legendFormat": "{{source}}"
         }
       ]
     },
     {
-      "title": "Self-probe RTT Quantiles — $relay",
-      "description": "Smokeping-style latency bands for the selected relay. Use the Relay filter to select a single relay.",
+      "title": "Self-probe RTT Stats — $relay",
+      "description": "Median, p90, and standard deviation for the selected relay. Use the Relay filter to select a single relay.",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 39 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 28 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -343,20 +337,16 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(cmping_response_duration_seconds_bucket{source=~\"$relay\", destination=~\"$relay\"}[$__rate_interval])))",
-          "legendFormat": "p99"
+          "expr": "cmping_rtt_p90_seconds{source=~\"$relay\", probe_type=\"self\"}",
+          "legendFormat": "p90 {{source}}"
         },
         {
-          "expr": "histogram_quantile(0.90, sum by (le) (rate(cmping_response_duration_seconds_bucket{source=~\"$relay\", destination=~\"$relay\"}[$__rate_interval])))",
-          "legendFormat": "p90"
+          "expr": "cmping_rtt_median_seconds{source=~\"$relay\", probe_type=\"self\"}",
+          "legendFormat": "median {{source}}"
         },
         {
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(cmping_response_duration_seconds_bucket{source=~\"$relay\", destination=~\"$relay\"}[$__rate_interval])))",
-          "legendFormat": "p50"
-        },
-        {
-          "expr": "histogram_quantile(0.10, sum by (le) (rate(cmping_response_duration_seconds_bucket{source=~\"$relay\", destination=~\"$relay\"}[$__rate_interval])))",
-          "legendFormat": "p10"
+          "expr": "cmping_rtt_stddev_seconds{source=~\"$relay\", probe_type=\"self\"}",
+          "legendFormat": "stddev {{source}}"
         }
       ]
     },
@@ -365,7 +355,7 @@
       "description": "Time spent creating accounts on each relay. High on first run, near-zero on subsequent runs once accounts are cached.",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 49 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 38 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -383,7 +373,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_account_setup_seconds{source=~\"$relay\", destination=~\"$relay\"}",
+          "expr": "cmping_account_setup_seconds{source=~\"$relay\", probe_type=\"self\"}",
           "legendFormat": "{{source}}"
         }
       ]
