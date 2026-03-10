@@ -13,7 +13,10 @@ _print = builtins.print
 import argparse
 import gc
 import logging
+import os
 import resource
+import signal
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -157,6 +160,28 @@ def scan_relays(relays, args):
     _print()
 
 
+def _kill_stale_rpc_servers(cache_dir):
+    """Kill orphaned deltachat-rpc-server processes from a previous crash.
+
+    Only targets processes whose command line contains our cache_dir path,
+    so unrelated deltachat instances are not affected.
+    """
+    cache_str = str(cache_dir)
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", f"deltachat-rpc-server.*{cache_str}"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            return
+        pids = result.stdout.strip().split()
+        for pid in pids:
+            log.warning("Killing stale deltachat-rpc-server (PID %s)", pid)
+            os.kill(int(pid), signal.SIGKILL)
+    except (FileNotFoundError, ProcessLookupError, ValueError):
+        pass
+
+
 def check_relays_alive(relays, args):
     """Run a single self-probe (relay→itself, count=1) for each relay in parallel.
 
@@ -195,6 +220,7 @@ def run_round(relays, args, executors):
     Pairs are distributed round-robin across the per-worker executors so each
     worker's single thread accesses its own accounts dir sequentially, avoiding
     deltachat-rpc-server DB lock contention.
+
     """
     pairs = [(s, d) for s in relays for d in relays]
     log.info("Starting probe round: %d pairs, %d workers", len(pairs), args.workers)
@@ -211,9 +237,13 @@ def run_round(relays, args, executors):
     for worker_id, executor in enumerate(executors):
         worker_dir = cache_dir / f"worker-{worker_id}"
         for src, dst in worker_pairs[worker_id]:
-            future = executor.submit(
-                run_probe, src, dst, args.count, args.ping_interval, str(worker_dir), args.timeout,
-            )
+            try:
+                future = executor.submit(
+                    run_probe, src, dst, args.count, args.ping_interval, str(worker_dir), args.timeout,
+                )
+            except RuntimeError:
+                # Executor was shut down (e.g. by signal handler).
+                break
             all_futures[future] = (src, dst)
 
     completed = 0
@@ -285,6 +315,12 @@ def main(argv=None):
         len(relays) ** 2, args.count, args.interval, args.workers,
     )
 
+    # Clean up orphaned RPC servers and stale locks from previous crashes.
+    _kill_stale_rpc_servers(cache_dir)
+    for lock in cache_dir.rglob("accounts.lock"):
+        lock.unlink(missing_ok=True)
+        log.debug("Removed stale lock: %s", lock)
+
     relays = check_relays_alive(relays, args)
     if not relays:
         raise SystemExit("No reachable relays -- aborting")
@@ -295,8 +331,26 @@ def main(argv=None):
 
     # Create executors once; reused across rounds to keep worker threads warm.
     executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
+
+    # Graceful shutdown: first SIGINT cancels pending work and waits up to
+    # 10s for running probes to finish; second SIGINT kills immediately.
+    shutdown_requested = False
+
+    def _handle_sigint(signum, frame):
+        nonlocal shutdown_requested
+        if shutdown_requested:
+            log.warning("Second interrupt -- killing immediately")
+            os._exit(1)
+        shutdown_requested = True
+        log.info("Shutting down, waiting up to 10s for running probes...")
+        for ex in executors:
+            ex.shutdown(wait=False, cancel_futures=True)
+
+    signal.signal(signal.SIGINT, _handle_sigint)
+    signal.signal(signal.SIGTERM, _handle_sigint)
+
     try:
-        while True:
+        while not shutdown_requested:
             elapsed = run_round(relays, args, executors)
 
             if args.textfile:
@@ -313,12 +367,14 @@ def main(argv=None):
                 )
             else:
                 log.info("Sleeping %.0fs until next round", remaining)
-                time.sleep(remaining)
-    except KeyboardInterrupt:
-        log.info("Interrupted, writing partial metrics")
-        if args.textfile:
-            write_textfile(args.textfile)
+                # Sleep in short intervals so we notice shutdown_requested.
+                deadline = time.time() + remaining
+                while time.time() < deadline and not shutdown_requested:
+                    time.sleep(min(1.0, deadline - time.time()))
     finally:
+        if args.textfile:
+            log.info("Writing final metrics")
+            write_textfile(args.textfile)
         for ex in executors:
             ex.shutdown(wait=True, cancel_futures=True)
 
