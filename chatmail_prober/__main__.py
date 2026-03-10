@@ -111,7 +111,7 @@ def parse_args(argv=None):
         "-v", "--verbose",
         action="count",
         default=0,
-        help="increase logging verbosity (show debug messages)",
+        help="increase verbosity: -v debug, -vv cmping errors/stats, -vvv cmping events",
     )
     parser.add_argument(
         "-q", "--quiet",
@@ -141,7 +141,7 @@ def scan_relays(relays, args):
     for r in relays:
         log.info("Probing %s...", r)
         results[r] = run_probe(r, r, args.count, args.ping_interval,
-                               str(cache_dir / "scan"), args.timeout)
+                               str(cache_dir / "scan"), args.timeout, args.verbose)
 
     ranked = sorted(
         relays,
@@ -195,7 +195,7 @@ def check_relays_alive(relays, args):
     with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
         futures = {
             pool.submit(run_probe, r, r, 1, args.ping_interval,
-                        str(cache_dir / "alive-check"), args.timeout): r
+                        str(cache_dir / "alive-check"), args.timeout, args.verbose): r
             for r in relays
         }
         dead = set()
@@ -243,7 +243,7 @@ def run_round(relays, args, executors, shutdown_event=None):
         for src, dst in worker_pairs[worker_id]:
             try:
                 future = executor.submit(
-                    run_probe, src, dst, args.count, args.ping_interval, str(worker_dir), args.timeout,
+                    run_probe, src, dst, args.count, args.ping_interval, str(worker_dir), args.timeout, args.verbose,
                 )
             except RuntimeError:
                 # Executor was shut down (e.g. by signal handler).
@@ -295,6 +295,10 @@ def main(argv=None):
         log.setLevel(logging.DEBUG)
     else:
         log.setLevel(logging.INFO)
+
+    # At -vv or higher, restore print so cmping's own output is visible.
+    if args.verbose >= 2:
+        builtins.print = _print
 
     # Raise the fd soft limit to the hard limit so large relay matrices
     # don't hit the default 1024 cap when deltachat-rpc-server opens many DBs.

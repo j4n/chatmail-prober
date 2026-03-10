@@ -113,7 +113,9 @@ chatmail-prober --relays relays.txt --port 9740 --textfile /var/lib/prometheus/n
 --workers N          Max concurrent probe threads (default: 5)
 --cache-dir PATH     Base dir for per-worker account directories (default: ~/.cache/chatmail-prober)
 --once               Run one round then exit
--v                   Show debug messages from chatmail_prober (root logger stays at WARNING)
+-v                   Debug messages from chatmail_prober
+-vv                  Also show cmping errors and stats
+-vvv                 Also show all deltachat events (very noisy)
 -q / --quiet         Suppress progress output (only show warnings/errors)
 ```
 

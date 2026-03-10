@@ -121,7 +121,7 @@ class TestPairGeneration:
 def _make_args(tmp_path, workers=2):
     return argparse.Namespace(
         count=1, ping_interval=0.1, timeout=10, workers=workers,
-        cache_dir=str(tmp_path / "cache"),
+        cache_dir=str(tmp_path / "cache"), verbose=0,
     )
 
 
@@ -145,7 +145,7 @@ def _fresh_metrics(monkeypatch):
     return new
 
 
-def _fake_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10):
+def _fake_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0):
     return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 
 
@@ -173,7 +173,7 @@ class TestRunRound:
         shutdown_event = threading.Event()
         call_count = 0
 
-        def _slow_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10):
+        def _slow_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0):
             nonlocal call_count
             call_count += 1
             # After a couple of probes complete, trigger shutdown.
@@ -207,7 +207,7 @@ class TestRunRound:
         assert recorded < 9, f"Expected some pairs skipped, but all {recorded} recorded"
 
     def test_crashed_probe_records_error(self, tmp_path, monkeypatch, _fresh_metrics):
-        def _crashing_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10):
+        def _crashing_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0):
             if source == "a.example" and dest == "b.example":
                 raise RuntimeError("boom")
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
@@ -234,7 +234,7 @@ class TestRunRound:
 
 class TestCheckRelaysAlive:
     def test_filters_dead_relays(self, tmp_path, monkeypatch, _fresh_metrics):
-        def _selective_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10):
+        def _selective_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0):
             if source == "dead.example":
                 return ProbeResult(source, dest, error="connection refused")
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])

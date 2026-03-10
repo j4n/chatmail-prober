@@ -52,20 +52,35 @@ def run_probe(
     interval: float = 0.1,
     accounts_dir: str | Path = "~/.cache/chatmail-prober/worker-0",
     timeout: float = 60.0,
+    verbose: int = 0,
 ) -> ProbeResult:
     """Run a single cmping probe between two relays.
 
     accounts_dir should be a per-worker directory so the worker's single
     thread accesses it sequentially, avoiding deltachat-rpc-server DB locks.
+
+    verbose levels (passed through to cmping):
+      0 = silent (default)
+      1 = errors and basic stats
+      2 = full addresses in stats
+      3 = all deltachat events (very noisy)
     """
     accounts_dir = Path(accounts_dir).expanduser()
+
+    # cmping verbose level: -vv (prober) -> verbose=1 (cmping errors),
+    # -vvv (prober) -> verbose=3 (cmping full events).
+    cmping_verbose = 0
+    if verbose >= 3:
+        cmping_verbose = 3
+    elif verbose >= 2:
+        cmping_verbose = 1
 
     args = argparse.Namespace(
         relay1=source,
         relay2=dest,
         count=count,
         interval=interval,
-        verbose=0,
+        verbose=cmping_verbose,
         numrecipients=1,
         reset=False,
     )
