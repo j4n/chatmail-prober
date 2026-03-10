@@ -360,6 +360,8 @@ def main(argv=None):
         for ex in executors:
             ex.shutdown(wait=False, cancel_futures=True)
         _kill_stale_rpc_servers(Path(args.cache_dir).expanduser())
+        # Main thread may be stuck in as_completed(); force exit after 5s.
+        threading.Timer(5.0, os._exit, args=(0,)).start()
 
     def _handle_usr1(signum, frame):
         stop_after_round.set()
@@ -395,6 +397,10 @@ def main(argv=None):
             write_textfile(args.textfile)
         for ex in executors:
             ex.shutdown(wait=not shutdown_event.is_set(), cancel_futures=True)
+        if shutdown_event.is_set():
+            # Worker threads may be stuck on I/O with killed rpc-servers.
+            # os._exit bypasses atexit thread-join and lets the OS reap zombies.
+            os._exit(0)
 
 
 if __name__ == "__main__":
