@@ -1,23 +1,21 @@
 """Prometheus metric definitions and update logic."""
 
 import logging
+import statistics
 
 from prometheus_client import (
-    CollectorRegistry, Counter, Gauge, Histogram, REGISTRY,
+    CollectorRegistry, Counter, Gauge, REGISTRY,
     disable_created_metrics,
 )
 
 # Suppress the _created timestamp lines added by prometheus_client for each
-# counter and histogram series — they double the textfile size and are not
+# counter and histogram series -- they double the textfile size and are not
 # useful for node_exporter's textfile collector.
 disable_created_metrics()
 
 log = logging.getLogger(__name__)
 
-# Histogram buckets tuned for email round-trip times (seconds), not ICMP.
-RTT_BUCKETS = (0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60)
-
-LABELS = ["source", "destination"]
+LABELS = ["source", "destination", "probe_type"]
 
 # Separate registry without default process_* / gc_* collectors.
 # Used for textfile output to avoid collisions with node_exporter's
@@ -25,11 +23,24 @@ LABELS = ["source", "destination"]
 # is still used for the HTTP /metrics endpoint.
 CMPING_REGISTRY = CollectorRegistry()
 
-response_duration = Histogram(
-    "cmping_response_duration_seconds",
-    "Round-trip time for individual ping messages",
+rtt_median = Gauge(
+    "cmping_rtt_median_seconds",
+    "Median round-trip time for the last probe round",
     LABELS,
-    buckets=RTT_BUCKETS,
+    registry=CMPING_REGISTRY,
+)
+
+rtt_stddev = Gauge(
+    "cmping_rtt_stddev_seconds",
+    "Standard deviation of round-trip times for the last probe round",
+    LABELS,
+    registry=CMPING_REGISTRY,
+)
+
+rtt_p90 = Gauge(
+    "cmping_rtt_p90_seconds",
+    "90th-percentile round-trip time for the last probe round",
+    LABELS,
     registry=CMPING_REGISTRY,
 )
 
@@ -57,7 +68,9 @@ account_setup_seconds = Gauge(
 
 def update_metrics(result):
     """Update Prometheus metrics from a ProbeResult."""
-    labels = dict(source=result.source, destination=result.destination)
+    probe_type = "self" if result.source == result.destination else "cross"
+    labels = dict(source=result.source, destination=result.destination,
+                  probe_type=probe_type)
 
     if result.error:
         send_errors_total.labels(**labels).inc()
@@ -67,5 +80,13 @@ def update_metrics(result):
     probe_success.labels(**labels).set(1 if result.loss == 0 else 0)
     account_setup_seconds.labels(**labels).set(result.account_setup_time)
 
-    for rtt_ms in result.rtts_ms:
-        response_duration.labels(**labels).observe(rtt_ms / 1000.0)
+    if result.rtts_ms:
+        rtt_s = [r / 1000.0 for r in result.rtts_ms]
+        rtt_median.labels(**labels).set(statistics.median(rtt_s))
+        sorted_rtt = sorted(rtt_s)
+        rtt_p90.labels(**labels).set(
+            sorted_rtt[min(int(len(sorted_rtt) * 0.9), len(sorted_rtt) - 1)]
+        )
+        rtt_stddev.labels(**labels).set(
+            statistics.stdev(rtt_s) if len(rtt_s) >= 2 else 0.0
+        )

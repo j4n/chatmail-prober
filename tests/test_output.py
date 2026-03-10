@@ -18,7 +18,7 @@ class TestWriteTextfile:
         write_textfile(str(out))
 
         content = out.read_text()
-        assert "cmping_response_duration_seconds" in content
+        assert "cmping_rtt_median_seconds" in content
         assert "cmping_probe_success" in content
         assert content.endswith("\n")
 
