@@ -44,6 +44,13 @@ rtt_p90 = Gauge(
     registry=CMPING_REGISTRY,
 )
 
+rtt_p10 = Gauge(
+    "cmping_rtt_p10_seconds",
+    "10th-percentile round-trip time for the last probe round",
+    LABELS,
+    registry=CMPING_REGISTRY,
+)
+
 send_errors_total = Counter(
     "cmping_send_errors_total",
     "Total number of failed probe rounds (timeout, crash, setup failure)",
@@ -86,6 +93,9 @@ def update_metrics(result):
         sorted_rtt = sorted(rtt_s)
         rtt_p90.labels(**labels).set(
             sorted_rtt[min(int(len(sorted_rtt) * 0.9), len(sorted_rtt) - 1)]
+        )
+        rtt_p10.labels(**labels).set(
+            sorted_rtt[max(int(len(sorted_rtt) * 0.1), 0)]
         )
         rtt_stddev.labels(**labels).set(
             statistics.stdev(rtt_s) if len(rtt_s) >= 2 else 0.0

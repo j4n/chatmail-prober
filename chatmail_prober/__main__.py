@@ -11,6 +11,7 @@ import builtins
 _print = builtins.print
 
 import argparse
+import gc
 import logging
 import resource
 import time
@@ -225,6 +226,8 @@ def run_round(relays, args, executors):
             log.exception("Worker crashed for %s -> %s", src, dst)
             result = ProbeResult(src, dst, error=str(exc))
         update_metrics(result)
+        if completed % 50 == 0:
+            gc.collect()
         if result.error:
             log.warning("[%d/%d] %s -> %s: ERROR %s", completed, len(pairs), src, dst, result.error)
         else:

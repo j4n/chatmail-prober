@@ -1,0 +1,526 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus" },
+    { "type": "panel", "id": "stat", "name": "Stat" },
+    { "type": "panel", "id": "state-timeline", "name": "State timeline" },
+    { "type": "panel", "id": "timeseries", "name": "Time series" }
+  ],
+  "id": null,
+  "uid": "chatmail-single",
+  "title": "Chatmail Relay — Single Relay",
+  "description": "Focused view of a single relay: self-probe health, peer connectivity, and smokeping-style RTT",
+  "tags": ["chatmail"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "5m",
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "relay",
+        "label": "Relay",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(cmping_probe_success{probe_type=\"self\"}, source)",
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "current": {}
+      },
+      {
+        "name": "peer",
+        "label": "Peer",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(cmping_probe_success{source=\"$relay\", probe_type=\"cross\"}, destination)",
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "title": "Overview",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "title": "Self-probe",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "FAIL", "color": "red" } } },
+            { "type": "value", "options": { "1": { "text": "OK", "color": "green" } } }
+          ],
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "expr": "cmping_probe_success{source=\"$relay\", probe_type=\"self\"}",
+          "legendFormat": "self"
+        }
+      ]
+    },
+    {
+      "title": "Peers OK",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.8 },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "expr": "count(cmping_probe_success{source=\"$relay\", probe_type=\"cross\"} == 1) / count(cmping_probe_success{source=\"$relay\", probe_type=\"cross\"})",
+          "legendFormat": "ok"
+        }
+      ]
+    },
+    {
+      "title": "Self-probe Median RTT",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "expr": "cmping_rtt_median_seconds{source=\"$relay\", probe_type=\"self\"}",
+          "legendFormat": "median"
+        }
+      ]
+    },
+    {
+      "title": "Avg Peer RTT",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 30 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "expr": "avg(cmping_rtt_median_seconds{source=\"$relay\", probe_type=\"cross\"})",
+          "legendFormat": "avg peer median"
+        }
+      ]
+    },
+    {
+      "title": "Self-probe",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "collapsed": false
+    },
+    {
+      "title": "Self-probe Health",
+      "description": "Self-probe success/failure over time.",
+      "type": "state-timeline",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 6 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "FAIL", "color": "red" } } },
+            { "type": "value", "options": { "1": { "text": "OK", "color": "green" } } }
+          ],
+          "custom": {
+            "fillOpacity": 80,
+            "spanNulls": true
+          }
+        }
+      },
+      "options": {
+        "showValue": "auto",
+        "alignValue": "center",
+        "mergeValues": true,
+        "rowHeight": 0.9
+      },
+      "targets": [
+        {
+          "expr": "cmping_probe_success{source=\"$relay\", probe_type=\"self\"}",
+          "legendFormat": "$relay (self)"
+        }
+      ]
+    },
+    {
+      "title": "Self-probe RTT (smokeping)",
+      "description": "Smokeping-style: median RTT line with p10-p90 band showing latency spread.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 10 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "drawStyle": "line",
+            "spanNulls": true,
+            "scaleDistribution": { "type": "log", "log": 10 }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "p90" },
+            "properties": [
+              { "id": "custom.fillBelowTo", "value": "p10" },
+              { "id": "custom.fillOpacity", "value": 20 },
+              { "id": "custom.lineWidth", "value": 0 },
+              { "id": "custom.hideFrom", "value": { "tooltip": true, "legend": true, "viz": false } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "p10" },
+            "properties": [
+              { "id": "custom.lineWidth", "value": 0 },
+              { "id": "custom.hideFrom", "value": { "tooltip": true, "legend": true, "viz": false } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "median" },
+            "properties": [
+              { "id": "custom.lineWidth", "value": 2 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cmping_rtt_median_seconds{source=\"$relay\", probe_type=\"self\"}",
+          "legendFormat": "median"
+        },
+        {
+          "refId": "B",
+          "expr": "cmping_rtt_p90_seconds{source=\"$relay\", probe_type=\"self\"}",
+          "legendFormat": "p90"
+        },
+        {
+          "refId": "C",
+          "expr": "cmping_rtt_p10_seconds{source=\"$relay\", probe_type=\"self\"}",
+          "legendFormat": "p10"
+        }
+      ]
+    },
+    {
+      "title": "Peer Connectivity",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 },
+      "collapsed": false
+    },
+    {
+      "title": "Outbound -- $relay -> peers",
+      "description": "Probe status from this relay to all peers over time.",
+      "type": "state-timeline",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 12, "w": 12, "x": 0, "y": 21 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "FAIL", "color": "red" } } },
+            { "type": "value", "options": { "1": { "text": "OK", "color": "green" } } }
+          ],
+          "custom": {
+            "fillOpacity": 80,
+            "spanNulls": true
+          }
+        }
+      },
+      "options": {
+        "showValue": "auto",
+        "alignValue": "center",
+        "mergeValues": true,
+        "rowHeight": 0.8
+      },
+      "targets": [
+        {
+          "expr": "cmping_probe_success{source=\"$relay\", probe_type=\"cross\"}",
+          "legendFormat": "{{destination}}"
+        }
+      ]
+    },
+    {
+      "title": "Inbound -- peers -> $relay",
+      "description": "Probe status from all peers to this relay over time.",
+      "type": "state-timeline",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 12, "w": 12, "x": 12, "y": 21 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "FAIL", "color": "red" } } },
+            { "type": "value", "options": { "1": { "text": "OK", "color": "green" } } }
+          ],
+          "custom": {
+            "fillOpacity": 80,
+            "spanNulls": true
+          }
+        }
+      },
+      "options": {
+        "showValue": "auto",
+        "alignValue": "center",
+        "mergeValues": true,
+        "rowHeight": 0.8
+      },
+      "targets": [
+        {
+          "expr": "cmping_probe_success{destination=\"$relay\", probe_type=\"cross\"}",
+          "legendFormat": "{{source}}"
+        }
+      ]
+    },
+    {
+      "title": "Outbound Median RTT -- $relay -> peers",
+      "description": "Median RTT from this relay to each peer.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 33 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 0,
+            "lineWidth": 1,
+            "drawStyle": "line",
+            "spanNulls": true,
+            "scaleDistribution": { "type": "log", "log": 10 }
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "lastNotNull"] }
+      },
+      "targets": [
+        {
+          "expr": "cmping_rtt_median_seconds{source=\"$relay\", probe_type=\"cross\"}",
+          "legendFormat": "{{destination}}"
+        }
+      ]
+    },
+    {
+      "title": "Peer Detail -- $relay -> $peer",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 43 },
+      "collapsed": false
+    },
+    {
+      "title": "$relay -> $peer Health",
+      "description": "Probe success/failure for this specific pair.",
+      "type": "state-timeline",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 44 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "FAIL", "color": "red" } } },
+            { "type": "value", "options": { "1": { "text": "OK", "color": "green" } } }
+          ],
+          "custom": {
+            "fillOpacity": 80,
+            "spanNulls": true
+          }
+        }
+      },
+      "options": {
+        "showValue": "auto",
+        "alignValue": "center",
+        "mergeValues": true,
+        "rowHeight": 0.9
+      },
+      "targets": [
+        {
+          "expr": "cmping_probe_success{source=\"$relay\", destination=\"$peer\", probe_type=\"cross\"}",
+          "legendFormat": "$relay -> $peer"
+        }
+      ]
+    },
+    {
+      "title": "$relay -> $peer RTT (smokeping)",
+      "description": "Smokeping-style: median RTT line with p10-p90 band showing latency spread.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 48 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "drawStyle": "line",
+            "spanNulls": true,
+            "scaleDistribution": { "type": "log", "log": 10 }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "p90" },
+            "properties": [
+              { "id": "custom.fillBelowTo", "value": "p10" },
+              { "id": "custom.fillOpacity", "value": 20 },
+              { "id": "custom.lineWidth", "value": 0 },
+              { "id": "custom.hideFrom", "value": { "tooltip": true, "legend": true, "viz": false } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "p10" },
+            "properties": [
+              { "id": "custom.lineWidth", "value": 0 },
+              { "id": "custom.hideFrom", "value": { "tooltip": true, "legend": true, "viz": false } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "median" },
+            "properties": [
+              { "id": "custom.lineWidth", "value": 2 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cmping_rtt_median_seconds{source=\"$relay\", destination=\"$peer\", probe_type=\"cross\"}",
+          "legendFormat": "median"
+        },
+        {
+          "refId": "B",
+          "expr": "cmping_rtt_p90_seconds{source=\"$relay\", destination=\"$peer\", probe_type=\"cross\"}",
+          "legendFormat": "p90"
+        },
+        {
+          "refId": "C",
+          "expr": "cmping_rtt_p10_seconds{source=\"$relay\", destination=\"$peer\", probe_type=\"cross\"}",
+          "legendFormat": "p10"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}

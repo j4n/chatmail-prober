@@ -23,6 +23,9 @@ def _fresh_metrics(monkeypatch):
         "rtt_p90": metrics_mod.Gauge(
             "cmping_rtt_p90_seconds_test", "test", labels, registry=registry,
         ),
+        "rtt_p10": metrics_mod.Gauge(
+            "cmping_rtt_p10_seconds_test", "test", labels, registry=registry,
+        ),
         "send_errors_total": metrics_mod.Counter(
             "cmping_send_errors_total_test", "test", labels, registry=registry,
         ),
@@ -51,6 +54,7 @@ class TestUpdateMetricsSuccess:
         lbl = _labels()
         assert metrics_mod.rtt_median.labels(**lbl)._value.get() == pytest.approx(0.5)
         assert metrics_mod.rtt_p90.labels(**lbl)._value.get() == pytest.approx(1.5)
+        assert metrics_mod.rtt_p10.labels(**lbl)._value.get() == pytest.approx(0.25)
         assert metrics_mod.rtt_stddev.labels(**lbl)._value.get() == pytest.approx(0.6614, abs=0.001)
 
     def test_probe_success_set_to_one_on_zero_loss(self):
@@ -110,6 +114,7 @@ class TestUpdateMetricsError:
         lbl = _labels()
         assert metrics_mod.rtt_median.labels(**lbl)._value.get() == 0.0
         assert metrics_mod.rtt_p90.labels(**lbl)._value.get() == 0.0
+        assert metrics_mod.rtt_p10.labels(**lbl)._value.get() == 0.0
         assert metrics_mod.rtt_stddev.labels(**lbl)._value.get() == 0.0
 
 
