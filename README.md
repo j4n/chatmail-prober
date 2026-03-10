@@ -109,7 +109,7 @@ chatmail-prober --relays relays.txt --port 9740 --textfile /var/lib/prometheus/n
 --interval SECS      Seconds between probe rounds (default: 900 = 15min)
 --count N            Pings per pair per round (default: 5)
 --ping-interval S    Seconds between pings within a probe (default: 0.1)
---timeout SECS       Per-pair receive timeout in seconds (default: 60)
+--timeout SECS       Per-pair receive timeout in seconds (default: 45)
 --workers N          Max concurrent probe threads (default: 5)
 --cache-dir PATH     Base dir for per-worker account directories (default: ~/.cache/chatmail-prober)
 --once               Run one round then exit

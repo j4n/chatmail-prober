@@ -17,6 +17,7 @@ import os
 import resource
 import signal
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -87,8 +88,8 @@ def parse_args(argv=None):
     parser.add_argument(
         "--timeout",
         type=int,
-        default=60,
-        help="per-pair receive timeout in seconds (default: 60)",
+        default=45,
+        help="per-pair receive timeout in seconds (default: 45)",
     )
     parser.add_argument(
         "--workers",
@@ -214,13 +215,16 @@ def check_relays_alive(relays, args):
     return alive
 
 
-def run_round(relays, args, executors):
+def run_round(relays, args, executors, shutdown_event=None):
     """Run one complete probe round across all relay pairs.
 
     Pairs are distributed round-robin across the per-worker executors so each
     worker's single thread accesses its own accounts dir sequentially, avoiding
     deltachat-rpc-server DB lock contention.
 
+    If shutdown_event is set during the round, the loop breaks immediately
+    without recording metrics for in-flight probes (which would show spurious
+    errors from killed rpc-server processes).
     """
     pairs = [(s, d) for s in relays for d in relays]
     log.info("Starting probe round: %d pairs, %d workers", len(pairs), args.workers)
@@ -248,6 +252,8 @@ def run_round(relays, args, executors):
 
     completed = 0
     for future in as_completed(all_futures):
+        if shutdown_event and shutdown_event.is_set():
+            break
         completed += 1
         src, dst = all_futures[future]
         try:
@@ -332,51 +338,59 @@ def main(argv=None):
     # Create executors once; reused across rounds to keep worker threads warm.
     executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
 
-    # Graceful shutdown: first SIGINT cancels pending work and waits up to
-    # 10s for running probes to finish; second SIGINT kills immediately.
-    shutdown_requested = False
+    # Graceful shutdown: first SIGINT/SIGTERM cancels pending work and kills
+    # rpc-server subprocesses to unblock running probes; second kills immediately.
+    # SIGUSR1 lets the current round finish, then exits cleanly.
+    shutdown_event = threading.Event()
+    stop_after_round = threading.Event()
+    sigint_count = 0
 
-    def _handle_sigint(signum, frame):
-        nonlocal shutdown_requested
-        if shutdown_requested:
+    def _handle_signal(signum, frame):
+        nonlocal sigint_count
+        sigint_count += 1
+        if sigint_count >= 2:
             log.warning("Second interrupt -- killing immediately")
             os._exit(1)
-        shutdown_requested = True
-        log.info("Shutting down, waiting up to 10s for running probes...")
+        shutdown_event.set()
+        log.info("Shutting down, killing running probes...")
         for ex in executors:
             ex.shutdown(wait=False, cancel_futures=True)
+        _kill_stale_rpc_servers(Path(args.cache_dir).expanduser())
 
-    signal.signal(signal.SIGINT, _handle_sigint)
-    signal.signal(signal.SIGTERM, _handle_sigint)
+    def _handle_usr1(signum, frame):
+        stop_after_round.set()
+        log.info("SIGUSR1 received -- will exit after current round completes")
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGUSR1, _handle_usr1)
 
     try:
-        while not shutdown_requested:
-            elapsed = run_round(relays, args, executors)
+        while not shutdown_event.is_set():
+            elapsed = run_round(relays, args, executors, shutdown_event)
 
             if args.textfile:
                 write_textfile(args.textfile)
 
-            if args.once:
+            if args.once or stop_after_round.is_set():
                 break
 
             remaining = max(0, args.interval - elapsed)
             if remaining == 0:
                 log.warning(
-                    "Probe round took %.0fs, exceeds interval %ds — starting next immediately",
+                    "Probe round took %.0fs, exceeds interval %ds -- starting next immediately",
                     elapsed, args.interval,
                 )
             else:
                 log.info("Sleeping %.0fs until next round", remaining)
-                # Sleep in short intervals so we notice shutdown_requested.
-                deadline = time.time() + remaining
-                while time.time() < deadline and not shutdown_requested:
-                    time.sleep(min(1.0, deadline - time.time()))
+                # Sleep via Event.wait so signal handler can wake us immediately.
+                shutdown_event.wait(timeout=remaining)
     finally:
         if args.textfile:
             log.info("Writing final metrics")
             write_textfile(args.textfile)
         for ex in executors:
-            ex.shutdown(wait=True, cancel_futures=True)
+            ex.shutdown(wait=not shutdown_event.is_set(), cancel_futures=True)
 
 
 if __name__ == "__main__":

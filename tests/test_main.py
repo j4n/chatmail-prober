@@ -1,9 +1,17 @@
-"""Tests for config parsing, CLI args, and pair generation."""
+"""Tests for config parsing, CLI args, pair generation, and orchestration."""
 
+import argparse
 import os
-import pytest
+import threading
+import time
 
-from chatmail_prober.__main__ import read_relay_list, parse_args
+import pytest
+from concurrent.futures import ThreadPoolExecutor
+from prometheus_client import CollectorRegistry
+
+from chatmail_prober.__main__ import read_relay_list, parse_args, run_round, check_relays_alive
+from chatmail_prober.prober import ProbeResult
+from chatmail_prober import metrics as metrics_mod
 
 
 class TestReadRelayList:
@@ -47,7 +55,7 @@ class TestParseArgs:
         assert args.interval == 900
         assert args.count == 5
         assert args.ping_interval == 0.1
-        assert args.timeout == 60
+        assert args.timeout == 45
         assert args.workers == 5
         assert args.once is False
         assert args.verbose == 0
@@ -105,3 +113,144 @@ class TestPairGeneration:
         relays = ["a", "b", "c"]
         pairs = [(s, d) for s in relays for d in relays]
         assert len(pairs) == 9
+
+
+# -- Orchestration tests (run_round, check_relays_alive) --
+
+
+def _make_args(tmp_path, workers=2):
+    return argparse.Namespace(
+        count=1, ping_interval=0.1, timeout=10, workers=workers,
+        cache_dir=str(tmp_path / "cache"),
+    )
+
+
+@pytest.fixture(autouse=False)
+def _fresh_metrics(monkeypatch):
+    """Replace metrics with fresh instances to avoid cross-contamination."""
+    registry = CollectorRegistry()
+    labels = ["source", "destination", "probe_type"]
+    new = {
+        "rtt_median": metrics_mod.Gauge("m_test", "t", labels, registry=registry),
+        "rtt_stddev": metrics_mod.Gauge("s_test", "t", labels, registry=registry),
+        "rtt_p90": metrics_mod.Gauge("p90_test", "t", labels, registry=registry),
+        "rtt_p10": metrics_mod.Gauge("p10_test", "t", labels, registry=registry),
+        "send_errors_total": metrics_mod.Counter("e_test", "t", labels, registry=registry),
+        "probe_success": metrics_mod.Gauge("ps_test", "t", labels, registry=registry),
+        "probe_loss_ratio": metrics_mod.Gauge("lr_test", "t", labels, registry=registry),
+        "account_setup_seconds": metrics_mod.Gauge("as_test", "t", labels, registry=registry),
+    }
+    for name, metric in new.items():
+        monkeypatch.setattr(metrics_mod, name, metric)
+    return new
+
+
+def _fake_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10):
+    return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
+
+
+class TestRunRound:
+    def test_completes_all_pairs(self, tmp_path, monkeypatch, _fresh_metrics):
+        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
+        relays = ["a.example", "b.example", "c.example"]
+        args = _make_args(tmp_path, workers=2)
+        executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
+        try:
+            run_round(relays, args, executors)
+        finally:
+            for ex in executors:
+                ex.shutdown(wait=False)
+
+        # All 9 pairs should have probe_success=1
+        for s in relays:
+            for d in relays:
+                pt = "self" if s == d else "cross"
+                val = metrics_mod.probe_success.labels(
+                    source=s, destination=d, probe_type=pt)._value.get()
+                assert val == 1.0, f"{s} -> {d} not recorded"
+
+    def test_shutdown_skips_metrics(self, tmp_path, monkeypatch, _fresh_metrics):
+        shutdown_event = threading.Event()
+        call_count = 0
+
+        def _slow_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10):
+            nonlocal call_count
+            call_count += 1
+            # After a couple of probes complete, trigger shutdown.
+            if call_count >= 2:
+                time.sleep(0.05)
+                shutdown_event.set()
+            return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
+
+        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _slow_probe)
+        relays = ["a.example", "b.example", "c.example"]
+        args = _make_args(tmp_path, workers=1)  # single worker for deterministic ordering
+        executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
+        try:
+            run_round(relays, args, executors, shutdown_event)
+        finally:
+            for ex in executors:
+                ex.shutdown(wait=False)
+
+        # Not all 9 pairs should have been recorded -- some were skipped.
+        recorded = 0
+        for s in relays:
+            for d in relays:
+                pt = "self" if s == d else "cross"
+                try:
+                    val = metrics_mod.probe_success.labels(
+                        source=s, destination=d, probe_type=pt)._value.get()
+                    if val != 0.0:
+                        recorded += 1
+                except Exception:
+                    pass
+        assert recorded < 9, f"Expected some pairs skipped, but all {recorded} recorded"
+
+    def test_crashed_probe_records_error(self, tmp_path, monkeypatch, _fresh_metrics):
+        def _crashing_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10):
+            if source == "a.example" and dest == "b.example":
+                raise RuntimeError("boom")
+            return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
+
+        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _crashing_probe)
+        relays = ["a.example", "b.example"]
+        args = _make_args(tmp_path, workers=2)
+        executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
+        try:
+            run_round(relays, args, executors)
+        finally:
+            for ex in executors:
+                ex.shutdown(wait=False)
+
+        # The crashed pair should have an error recorded.
+        lbl = dict(source="a.example", destination="b.example", probe_type="cross")
+        assert metrics_mod.send_errors_total.labels(**lbl)._value.get() == 1.0
+        assert metrics_mod.probe_success.labels(**lbl)._value.get() == 0.0
+
+        # The other pairs should still succeed.
+        lbl_ok = dict(source="b.example", destination="a.example", probe_type="cross")
+        assert metrics_mod.probe_success.labels(**lbl_ok)._value.get() == 1.0
+
+
+class TestCheckRelaysAlive:
+    def test_filters_dead_relays(self, tmp_path, monkeypatch, _fresh_metrics):
+        def _selective_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10):
+            if source == "dead.example":
+                return ProbeResult(source, dest, error="connection refused")
+            return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
+
+        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _selective_probe)
+        relays = ["a.example", "dead.example", "b.example"]
+        args = _make_args(tmp_path, workers=3)
+        alive = check_relays_alive(relays, args)
+
+        assert alive == ["a.example", "b.example"]
+        assert "dead.example" not in alive
+
+    def test_all_alive(self, tmp_path, monkeypatch, _fresh_metrics):
+        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
+        relays = ["a.example", "b.example", "c.example"]
+        args = _make_args(tmp_path, workers=3)
+        alive = check_relays_alive(relays, args)
+
+        assert alive == relays

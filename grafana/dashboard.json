@@ -41,7 +41,7 @@
         "name": "source",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "query": "label_values(cmping_probe_success, source)",
+        "query": "label_values(cmping_probe_loss_ratio, source)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -51,7 +51,7 @@
         "name": "destination",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "query": "label_values(cmping_probe_success, destination)",
+        "query": "label_values(cmping_probe_loss_ratio, destination)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -62,7 +62,7 @@
         "label": "Relay (self-probe)",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "query": "label_values(cmping_probe_success, source)",
+        "query": "label_values(cmping_probe_loss_ratio, source)",
         "refresh": 2,
         "includeAll": false,
         "multi": false,
@@ -103,7 +103,7 @@
       },
       "targets": [
         {
-          "expr": "count(cmping_probe_success == 1) / count(cmping_probe_success)",
+          "expr": "count(cmping_probe_loss_ratio == 0) / count(cmping_probe_loss_ratio)",
           "legendFormat": "success rate"
         }
       ]
@@ -129,7 +129,7 @@
       },
       "targets": [
         {
-          "expr": "count(cmping_probe_success)",
+          "expr": "count(cmping_probe_loss_ratio)",
           "legendFormat": "pairs"
         }
       ]
@@ -157,7 +157,7 @@
       },
       "targets": [
         {
-          "expr": "count(cmping_probe_success == 0) or vector(0)",
+          "expr": "count(cmping_probe_loss_ratio > 0) or vector(0)",
           "legendFormat": "failed"
         }
       ]
@@ -186,7 +186,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (source) (max_over_time(cmping_probe_success[$__rate_interval]) == 0) unless on(source) count by (source) (max_over_time(cmping_probe_success[$__rate_interval]) > 0)) or vector(0)",
+          "expr": "count(count by (source) (min_over_time(cmping_probe_loss_ratio[$__rate_interval]) > 0)) or vector(0)",
           "legendFormat": "dead"
         }
       ]
@@ -260,7 +260,7 @@
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "OK" },
+            "matcher": { "id": "byName", "options": "Loss" },
             "properties": [
               { "id": "custom.width", "value": 60 },
               { "id": "custom.displayMode", "value": "color-background-solid" },
@@ -269,8 +269,11 @@
                 "value": {
                   "mode": "absolute",
                   "steps": [
-                    { "color": "red", "value": null },
-                    { "color": "green", "value": 1 }
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 0.1 },
+                    { "color": "orange", "value": 0.3 },
+                    { "color": "red", "value": 0.7 },
+                    { "color": "dark-red", "value": 0.9 }
                   ]
                 }
               }
@@ -291,7 +294,7 @@
         },
         {
           "refId": "B",
-          "expr": "cmping_probe_success{source=~\"$source\", destination=~\"$destination\"}",
+          "expr": "cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true
         }
@@ -310,7 +313,7 @@
             },
             "renameByName": {
               "Value #A": "Avg RTT",
-              "Value #B": "OK"
+              "Value #B": "Loss"
             }
           }
         }
@@ -323,8 +326,8 @@
       "collapsed": false
     },
     {
-      "title": "Failing Pairs Timeline",
-      "description": "Shows only failing pairs (probe_success=0). Use source/destination filters above to inspect specific pairs.",
+      "title": "Pairs with Loss",
+      "description": "Shows only pairs with packet loss (loss_ratio > 0). Color indicates severity.",
       "type": "state-timeline",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 20 },
@@ -333,13 +336,21 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
+              { "color": "yellow", "value": null },
+              { "color": "orange", "value": 0.3 },
+              { "color": "#ff6600", "value": 0.5 },
+              { "color": "red", "value": 0.7 },
+              { "color": "dark-red", "value": 0.9 }
             ]
           },
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "FAIL", "color": "red" } } },
-            { "type": "value", "options": { "1": { "text": "OK", "color": "green" } } }
+            { "type": "value", "options": {
+              "0.2": { "text": "1 lost", "color": "yellow" },
+              "0.4": { "text": "2 lost", "color": "orange" },
+              "0.6": { "text": "3 lost", "color": "#ff6600" },
+              "0.8": { "text": "4 lost", "color": "red" },
+              "1":   { "text": "FAIL",   "color": "dark-red" }
+            } }
           ],
           "custom": { "fillOpacity": 80 }
         }
@@ -352,7 +363,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_probe_success{source=~\"$source\", destination=~\"$destination\"} == 0",
+          "expr": "cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\"} > 0",
           "legendFormat": "{{source}} -> {{destination}}"
         }
       ]

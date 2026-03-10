@@ -41,7 +41,7 @@
         "label": "Relay",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "query": "label_values(cmping_probe_success{probe_type=\"self\"}, source)",
+        "query": "label_values(cmping_probe_loss_ratio{probe_type=\"self\"}, source)",
         "refresh": 2,
         "includeAll": false,
         "multi": false,
@@ -52,7 +52,7 @@
         "label": "Peer",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "query": "label_values(cmping_probe_success{source=\"$relay\", probe_type=\"cross\"}, destination)",
+        "query": "label_values(cmping_probe_loss_ratio{source=\"$relay\", probe_type=\"cross\"}, destination)",
         "refresh": 2,
         "includeAll": false,
         "multi": false,
@@ -75,13 +75,20 @@
       "fieldConfig": {
         "defaults": {
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "FAIL", "color": "red" } } },
-            { "type": "value", "options": { "1": { "text": "OK", "color": "green" } } }
+            { "type": "value", "options": {
+              "0":   { "text": "OK",     "color": "green" },
+              "0.2": { "text": "1 lost", "color": "yellow" },
+              "0.4": { "text": "2 lost", "color": "orange" },
+              "0.6": { "text": "3 lost", "color": "#ff6600" },
+              "0.8": { "text": "4 lost", "color": "red" },
+              "1":   { "text": "FAIL",   "color": "dark-red" }
+            } }
           ],
           "thresholds": {
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "dark-red", "value": 0.9 }
             ]
           }
         }
@@ -93,7 +100,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_probe_success{source=\"$relay\", probe_type=\"self\"}",
+          "expr": "cmping_probe_loss_ratio{source=\"$relay\", probe_type=\"self\"}",
           "legendFormat": "self"
         }
       ]
@@ -124,7 +131,7 @@
       },
       "targets": [
         {
-          "expr": "count(cmping_probe_success{source=\"$relay\", probe_type=\"cross\"} == 1) / count(cmping_probe_success{source=\"$relay\", probe_type=\"cross\"})",
+          "expr": "count(cmping_probe_loss_ratio{source=\"$relay\", probe_type=\"cross\"} == 0) / count(cmping_probe_loss_ratio{source=\"$relay\", probe_type=\"cross\"})",
           "legendFormat": "ok"
         }
       ]
@@ -204,13 +211,23 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "orange", "value": 0.3 },
+              { "color": "#ff6600", "value": 0.5 },
+              { "color": "red", "value": 0.7 },
+              { "color": "dark-red", "value": 0.9 }
             ]
           },
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "FAIL", "color": "red" } } },
-            { "type": "value", "options": { "1": { "text": "OK", "color": "green" } } }
+            { "type": "value", "options": {
+              "0":   { "text": "OK",     "color": "green" },
+              "0.2": { "text": "1 lost", "color": "yellow" },
+              "0.4": { "text": "2 lost", "color": "orange" },
+              "0.6": { "text": "3 lost", "color": "#ff6600" },
+              "0.8": { "text": "4 lost", "color": "red" },
+              "1":   { "text": "FAIL",   "color": "dark-red" }
+            } }
           ],
           "custom": {
             "fillOpacity": 80,
@@ -226,7 +243,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_probe_success{source=\"$relay\", probe_type=\"self\"}",
+          "expr": "cmping_probe_loss_ratio{source=\"$relay\", probe_type=\"self\"}",
           "legendFormat": "$relay (self)"
         }
       ]
@@ -337,13 +354,23 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "orange", "value": 0.3 },
+              { "color": "#ff6600", "value": 0.5 },
+              { "color": "red", "value": 0.7 },
+              { "color": "dark-red", "value": 0.9 }
             ]
           },
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "FAIL", "color": "red" } } },
-            { "type": "value", "options": { "1": { "text": "OK", "color": "green" } } }
+            { "type": "value", "options": {
+              "0":   { "text": "OK",     "color": "green" },
+              "0.2": { "text": "1 lost", "color": "yellow" },
+              "0.4": { "text": "2 lost", "color": "orange" },
+              "0.6": { "text": "3 lost", "color": "#ff6600" },
+              "0.8": { "text": "4 lost", "color": "red" },
+              "1":   { "text": "FAIL",   "color": "dark-red" }
+            } }
           ],
           "custom": {
             "fillOpacity": 80,
@@ -359,7 +386,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_probe_success{source=\"$relay\", probe_type=\"cross\"}",
+          "expr": "cmping_probe_loss_ratio{source=\"$relay\", probe_type=\"cross\"}",
           "legendFormat": "{{destination}}"
         }
       ]
@@ -375,13 +402,23 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "orange", "value": 0.3 },
+              { "color": "#ff6600", "value": 0.5 },
+              { "color": "red", "value": 0.7 },
+              { "color": "dark-red", "value": 0.9 }
             ]
           },
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "FAIL", "color": "red" } } },
-            { "type": "value", "options": { "1": { "text": "OK", "color": "green" } } }
+            { "type": "value", "options": {
+              "0":   { "text": "OK",     "color": "green" },
+              "0.2": { "text": "1 lost", "color": "yellow" },
+              "0.4": { "text": "2 lost", "color": "orange" },
+              "0.6": { "text": "3 lost", "color": "#ff6600" },
+              "0.8": { "text": "4 lost", "color": "red" },
+              "1":   { "text": "FAIL",   "color": "dark-red" }
+            } }
           ],
           "custom": {
             "fillOpacity": 80,
@@ -397,7 +434,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_probe_success{destination=\"$relay\", probe_type=\"cross\"}",
+          "expr": "cmping_probe_loss_ratio{destination=\"$relay\", probe_type=\"cross\"}",
           "legendFormat": "{{source}}"
         }
       ]
@@ -448,13 +485,23 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "orange", "value": 0.3 },
+              { "color": "#ff6600", "value": 0.5 },
+              { "color": "red", "value": 0.7 },
+              { "color": "dark-red", "value": 0.9 }
             ]
           },
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "FAIL", "color": "red" } } },
-            { "type": "value", "options": { "1": { "text": "OK", "color": "green" } } }
+            { "type": "value", "options": {
+              "0":   { "text": "OK",     "color": "green" },
+              "0.2": { "text": "1 lost", "color": "yellow" },
+              "0.4": { "text": "2 lost", "color": "orange" },
+              "0.6": { "text": "3 lost", "color": "#ff6600" },
+              "0.8": { "text": "4 lost", "color": "red" },
+              "1":   { "text": "FAIL",   "color": "dark-red" }
+            } }
           ],
           "custom": {
             "fillOpacity": 80,
@@ -470,7 +517,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_probe_success{source=\"$relay\", destination=\"$peer\", probe_type=\"cross\"}",
+          "expr": "cmping_probe_loss_ratio{source=\"$relay\", destination=\"$peer\", probe_type=\"cross\"}",
           "legendFormat": "$relay -> $peer"
         }
       ]
