@@ -71,16 +71,17 @@ See `relay_speedtest.md` for results across all known public chatmail relays.
 
 | Metric | Type | Description |
 |---|---|---|
-| `cmping_requests_total` | Counter | Ping messages sent |
-| `cmping_responses_total` | Counter | Ping messages received |
-| `cmping_response_duration_seconds` | Histogram | Per-message round-trip time |
-| `cmping_send_errors_total` | Counter | Failed probe rounds |
-| `cmping_probe_success` | Gauge | 1 if last round succeeded, 0 if not |
-| `cmping_account_setup_seconds` | Gauge | Account setup time |
+| `cmping_probe_success` | Gauge | 1 if last round had zero loss, 0 otherwise |
+| `cmping_probe_loss_ratio` | Gauge | Fraction of pings lost (0.0 = none, 1.0 = all) |
+| `cmping_rtt_median_seconds` | Gauge | Median round-trip time |
+| `cmping_rtt_p90_seconds` | Gauge | 90th-percentile round-trip time |
+| `cmping_rtt_p10_seconds` | Gauge | 10th-percentile round-trip time |
+| `cmping_rtt_stddev_seconds` | Gauge | Standard deviation of round-trip times |
+| `cmping_send_errors_total` | Counter | Failed probe rounds (timeout, crash, setup failure) |
+| `cmping_account_setup_seconds` | Gauge | Time spent on account setup |
 
-All metrics have `source` and `destination` labels.
-
-Histogram buckets are tuned for email round-trips: 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60 seconds.
+All metrics have `source`, `destination`, and `probe_type` labels.
+`probe_type` is `"self"` when source equals destination, `"cross"` otherwise.
 
 ## Output modes
 
@@ -144,6 +145,32 @@ WantedBy=multi-user.target
   scrape_interval: 5m
   static_configs:
     - targets: ['localhost:9740']
+```
+
+## Grafana dashboards
+
+Three dashboards are included in `grafana/`:
+
+- **dashboard-intra.json** -- Self-probe overview: per-relay health, state timeline, median/p90/stddev RTT panels
+- **dashboard-inter.json** -- Cross-relay overview: pair matrix, probe results table, per-pair RTT panels
+- **dashboard-single.json** -- Single relay focus: self-probe smokeping plot, peer connectivity timelines, per-peer smokeping detail
+
+Import via Grafana UI (Dashboards > Import > Upload JSON) or provision them. All dashboards use a `$datasource` variable -- select your Prometheus instance after import.
+
+The smokeping panels show a median RTT line with a gray p10-p90 band. The median line color follows RTT thresholds: green < 1s, blue < 3s, yellow < 5s, orange < 10s, red >= 10s.
+
+### Smokeping panel generator
+
+`grafana/smokeping_panel.py` generates reusable smokeping-style panel JSON:
+
+```python
+from grafana.smokeping_panel import smokeping_panel
+
+panel = smokeping_panel(
+    title="My RTT",
+    metric_filter='source="relay.example", probe_type="self"',
+    gridPos={"h": 10, "w": 24, "x": 0, "y": 0},
+)
 ```
 
 ## Development

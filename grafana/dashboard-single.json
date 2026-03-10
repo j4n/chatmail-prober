@@ -233,7 +233,7 @@
     },
     {
       "title": "Self-probe RTT (smokeping)",
-      "description": "Smokeping-style: median RTT line with p10-p90 band showing latency spread.",
+      "description": "Smokeping-style: median RTT line with p10-p90 band.",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 10 },
@@ -246,6 +246,16 @@
             "drawStyle": "line",
             "spanNulls": true,
             "scaleDistribution": { "type": "log", "log": 10 }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "blue", "value": 1 },
+              { "color": "yellow", "value": 3 },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 10 }
+            ]
           }
         },
         "overrides": [
@@ -253,32 +263,44 @@
             "matcher": { "id": "byName", "options": "p90" },
             "properties": [
               { "id": "custom.fillBelowTo", "value": "p10" },
-              { "id": "custom.fillOpacity", "value": 20 },
+              { "id": "custom.fillOpacity", "value": 15 },
               { "id": "custom.lineWidth", "value": 0 },
-              { "id": "custom.hideFrom", "value": { "tooltip": true, "legend": true, "viz": false } },
-              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#cccccc" } }
             ]
           },
           {
             "matcher": { "id": "byName", "options": "p10" },
             "properties": [
               { "id": "custom.lineWidth", "value": 0 },
-              { "id": "custom.hideFrom", "value": { "tooltip": true, "legend": true, "viz": false } },
-              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#cccccc" } }
             ]
           },
           {
             "matcher": { "id": "byName", "options": "median" },
             "properties": [
               { "id": "custom.lineWidth", "value": 2 },
-              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+              { "id": "custom.gradientMode", "value": "scheme" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "blue", "value": 1 },
+                    { "color": "yellow", "value": 3 },
+                    { "color": "orange", "value": 5 },
+                    { "color": "red", "value": 10 }
+                  ]
+                }
+              }
             ]
           }
         ]
       },
       "options": {
         "tooltip": { "mode": "multi", "sort": "desc" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] }
       },
       "targets": [
         {
@@ -455,7 +477,7 @@
     },
     {
       "title": "$relay -> $peer RTT (smokeping)",
-      "description": "Smokeping-style: median RTT line with p10-p90 band showing latency spread.",
+      "description": "Smokeping-style: median RTT line with p10-p90 band.",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 48 },
@@ -468,6 +490,16 @@
             "drawStyle": "line",
             "spanNulls": true,
             "scaleDistribution": { "type": "log", "log": 10 }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "blue", "value": 1 },
+              { "color": "yellow", "value": 3 },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 10 }
+            ]
           }
         },
         "overrides": [
@@ -475,32 +507,44 @@
             "matcher": { "id": "byName", "options": "p90" },
             "properties": [
               { "id": "custom.fillBelowTo", "value": "p10" },
-              { "id": "custom.fillOpacity", "value": 20 },
+              { "id": "custom.fillOpacity", "value": 15 },
               { "id": "custom.lineWidth", "value": 0 },
-              { "id": "custom.hideFrom", "value": { "tooltip": true, "legend": true, "viz": false } },
-              { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#cccccc" } }
             ]
           },
           {
             "matcher": { "id": "byName", "options": "p10" },
             "properties": [
               { "id": "custom.lineWidth", "value": 0 },
-              { "id": "custom.hideFrom", "value": { "tooltip": true, "legend": true, "viz": false } },
-              { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#cccccc" } }
             ]
           },
           {
             "matcher": { "id": "byName", "options": "median" },
             "properties": [
               { "id": "custom.lineWidth", "value": 2 },
-              { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }
+              { "id": "custom.gradientMode", "value": "scheme" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "blue", "value": 1 },
+                    { "color": "yellow", "value": 3 },
+                    { "color": "orange", "value": 5 },
+                    { "color": "red", "value": 10 }
+                  ]
+                }
+              }
             ]
           }
         ]
       },
       "options": {
         "tooltip": { "mode": "multi", "sort": "desc" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] }
       },
       "targets": [
         {

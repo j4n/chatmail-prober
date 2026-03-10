@@ -65,6 +65,13 @@ probe_success = Gauge(
     registry=CMPING_REGISTRY,
 )
 
+probe_loss_ratio = Gauge(
+    "cmping_probe_loss_ratio",
+    "Fraction of pings lost in the last probe round (0.0 = no loss, 1.0 = all lost)",
+    LABELS,
+    registry=CMPING_REGISTRY,
+)
+
 account_setup_seconds = Gauge(
     "cmping_account_setup_seconds",
     "Time spent on account setup in the last probe round",
@@ -82,9 +89,12 @@ def update_metrics(result):
     if result.error:
         send_errors_total.labels(**labels).inc()
         probe_success.labels(**labels).set(0)
+        probe_loss_ratio.labels(**labels).set(1.0)
         return
 
     probe_success.labels(**labels).set(1 if result.loss == 0 else 0)
+    if result.sent > 0:
+        probe_loss_ratio.labels(**labels).set(1.0 - result.received / result.sent)
     account_setup_seconds.labels(**labels).set(result.account_setup_time)
 
     if result.rtts_ms:

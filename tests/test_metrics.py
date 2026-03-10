@@ -32,6 +32,9 @@ def _fresh_metrics(monkeypatch):
         "probe_success": metrics_mod.Gauge(
             "cmping_probe_success_test", "test", labels, registry=registry,
         ),
+        "probe_loss_ratio": metrics_mod.Gauge(
+            "cmping_probe_loss_ratio_test", "test", labels, registry=registry,
+        ),
         "account_setup_seconds": metrics_mod.Gauge(
             "cmping_account_setup_seconds_test", "test", labels, registry=registry,
         ),
@@ -61,11 +64,13 @@ class TestUpdateMetricsSuccess:
         result = ProbeResult("a.example", "b.example", sent=3, received=3, loss=0.0)
         metrics_mod.update_metrics(result)
         assert metrics_mod.probe_success.labels(**_labels())._value.get() == 1.0
+        assert metrics_mod.probe_loss_ratio.labels(**_labels())._value.get() == pytest.approx(0.0)
 
     def test_probe_success_set_to_zero_on_partial_loss(self):
         result = ProbeResult("a.example", "b.example", sent=3, received=2, loss=33.3)
         metrics_mod.update_metrics(result)
         assert metrics_mod.probe_success.labels(**_labels())._value.get() == 0.0
+        assert metrics_mod.probe_loss_ratio.labels(**_labels())._value.get() == pytest.approx(1/3)
 
     def test_account_setup_time_stored(self):
         result = ProbeResult("a.example", "b.example", sent=1, received=1, loss=0.0,
@@ -106,6 +111,7 @@ class TestUpdateMetricsError:
         result = ProbeResult("a.example", "b.example", error="timeout")
         metrics_mod.update_metrics(result)
         assert metrics_mod.probe_success.labels(**_labels())._value.get() == 0.0
+        assert metrics_mod.probe_loss_ratio.labels(**_labels())._value.get() == 1.0
 
     def test_error_does_not_touch_rtt_gauges(self):
         result = ProbeResult("a.example", "b.example", error="boom")
