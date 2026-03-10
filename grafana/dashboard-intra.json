@@ -21,7 +21,7 @@
   "uid": "chatmail-intra",
   "title": "Chatmail Relay Interop — Self-probe",
   "description": "Per-relay self-probe health: each relay sends a message to itself to measure local delivery latency",
-  "tags": ["chatmail", "cmping", "interop"],
+  "tags": ["chatmail"],
   "timezone": "browser",
   "editable": true,
   "graphTooltip": 1,
@@ -229,6 +229,25 @@
               "Value #B": "OK"
             }
           }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "source": { "aggregations": [], "operation": "groupby" },
+              "Median RTT": { "aggregations": ["lastNotNull"], "operation": "aggregate" },
+              "OK": { "aggregations": ["lastNotNull"], "operation": "aggregate" }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Median RTT (lastNotNull)": "Median RTT",
+              "OK (lastNotNull)": "OK"
+            }
+          }
         }
       ]
     },
@@ -277,8 +296,7 @@
       "collapsed": false
     },
     {
-      "title": "Self-probe Median RTT — all relays",
-      "description": "Median RTT per relay for self-probes. Lines are extended across probe interval gaps.",
+      "title": "Median RTT",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 18 },
@@ -289,7 +307,8 @@
             "fillOpacity": 0,
             "lineWidth": 1,
             "drawStyle": "line",
-            "spanNulls": true
+            "spanNulls": true,
+            "scaleDistribution": { "type": "log", "log": 10 }
           }
         }
       },
@@ -305,8 +324,7 @@
       ]
     },
     {
-      "title": "Self-probe RTT Stats — $relay",
-      "description": "Median, p90, and standard deviation for the selected relay. Use the Relay filter to select a single relay.",
+      "title": "p90 RTT",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 28 },
@@ -314,39 +332,50 @@
         "defaults": {
           "unit": "s",
           "custom": {
-            "fillOpacity": 20,
+            "fillOpacity": 0,
             "lineWidth": 1,
             "drawStyle": "line",
-            "gradientMode": "scheme",
             "spanNulls": true,
-            "lineInterpolation": "smooth"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 2 },
-              { "color": "red", "value": 10 }
-            ]
+            "scaleDistribution": { "type": "log", "log": 10 }
           }
         }
       },
       "options": {
         "tooltip": { "mode": "multi", "sort": "desc" },
-        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] }
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "lastNotNull"] }
       },
       "targets": [
         {
           "expr": "cmping_rtt_p90_seconds{source=~\"$relay\", probe_type=\"self\"}",
-          "legendFormat": "p90 {{source}}"
-        },
-        {
-          "expr": "cmping_rtt_median_seconds{source=~\"$relay\", probe_type=\"self\"}",
-          "legendFormat": "median {{source}}"
-        },
+          "legendFormat": "{{source}}"
+        }
+      ]
+    },
+    {
+      "title": "Stddev",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 38 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 0,
+            "lineWidth": 1,
+            "drawStyle": "line",
+            "spanNulls": true,
+            "scaleDistribution": { "type": "log", "log": 10 }
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "lastNotNull"] }
+      },
+      "targets": [
         {
           "expr": "cmping_rtt_stddev_seconds{source=~\"$relay\", probe_type=\"self\"}",
-          "legendFormat": "stddev {{source}}"
+          "legendFormat": "{{source}}"
         }
       ]
     },
@@ -355,7 +384,7 @@
       "description": "Time spent creating accounts on each relay. High on first run, near-zero on subsequent runs once accounts are cached.",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 38 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 48 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",

@@ -22,7 +22,7 @@
   "uid": "chatmail-inter",
   "title": "Chatmail Relay Interop — Cross-relay",
   "description": "Interoperability probe results between relay pairs",
-  "tags": ["chatmail", "cmping", "interop"],
+  "tags": ["chatmail"],
   "timezone": "browser",
   "editable": true,
   "graphTooltip": 1,
@@ -324,6 +324,28 @@
               "p90": 4
             }
           }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "source": { "aggregations": [], "operation": "groupby" },
+              "destination": { "aggregations": [], "operation": "groupby" },
+              "OK": { "aggregations": ["lastNotNull"], "operation": "aggregate" },
+              "Median": { "aggregations": ["lastNotNull"], "operation": "aggregate" },
+              "p90": { "aggregations": ["lastNotNull"], "operation": "aggregate" }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "OK (lastNotNull)": "OK",
+              "Median (lastNotNull)": "Median",
+              "p90 (lastNotNull)": "p90"
+            }
+          }
         }
       ]
     },
@@ -375,8 +397,7 @@
       "collapsed": false
     },
     {
-      "title": "RTT Stats — $source -> $destination",
-      "description": "Median, p90, and standard deviation per pair. Select specific source/destination from the dropdowns above.",
+      "title": "Median RTT",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 41 },
@@ -384,56 +405,11 @@
         "defaults": {
           "unit": "s",
           "custom": {
-            "fillOpacity": 20,
-            "lineWidth": 1,
-            "drawStyle": "line",
-            "gradientMode": "scheme",
-            "spanNulls": true,
-            "lineInterpolation": "smooth"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 5 },
-              { "color": "red", "value": 30 }
-            ]
-          }
-        }
-      },
-      "options": {
-        "tooltip": { "mode": "multi", "sort": "desc" },
-        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] }
-      },
-      "targets": [
-        {
-          "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
-          "legendFormat": "p90 {{source}} -> {{destination}}"
-        },
-        {
-          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
-          "legendFormat": "median {{source}} -> {{destination}}"
-        },
-        {
-          "expr": "cmping_rtt_stddev_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
-          "legendFormat": "stddev {{source}} -> {{destination}}"
-        }
-      ]
-    },
-    {
-      "title": "Per-Pair Median RTT",
-      "description": "Median round-trip time per relay pair over time.",
-      "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 51 },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
             "fillOpacity": 0,
             "lineWidth": 1,
             "drawStyle": "line",
-            "spanNulls": true
+            "spanNulls": true,
+            "scaleDistribution": { "type": "log", "log": 10 }
           }
         }
       },
@@ -449,9 +425,65 @@
       ]
     },
     {
+      "title": "p90 RTT",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 51 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 0,
+            "lineWidth": 1,
+            "drawStyle": "line",
+            "spanNulls": true,
+            "scaleDistribution": { "type": "log", "log": 10 }
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "lastNotNull"] }
+      },
+      "targets": [
+        {
+          "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "legendFormat": "{{source}} -> {{destination}}"
+        }
+      ]
+    },
+    {
+      "title": "Stddev",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 61 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 0,
+            "lineWidth": 1,
+            "drawStyle": "line",
+            "spanNulls": true,
+            "scaleDistribution": { "type": "log", "log": 10 }
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "lastNotNull"] }
+      },
+      "targets": [
+        {
+          "expr": "cmping_rtt_stddev_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "legendFormat": "{{source}} -> {{destination}}"
+        }
+      ]
+    },
+    {
       "title": "Errors & Setup",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 61 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 71 },
       "collapsed": false
     },
     {
@@ -459,7 +491,7 @@
       "description": "Pairs that have accumulated send errors. Shows total error count per pair.",
       "type": "table",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 62 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 72 },
       "fieldConfig": {
         "defaults": {
           "custom": { "filterable": true, "displayMode": "color-background-solid" },
@@ -510,7 +542,7 @@
       "description": "Time spent setting up accounts on each relay pair. High on first run, near-zero on subsequent runs.",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 62 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 72 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
