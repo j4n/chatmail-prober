@@ -34,18 +34,20 @@ def write_textfile(path):
     """
     output = generate_latest(CMPING_REGISTRY)
     dirpath = os.path.dirname(path)
+    tmp_path = None
     try:
         fd, tmp_path = tempfile.mkstemp(dir=dirpath, suffix=".tmp")
         try:
             os.write(fd, output)
+            os.fchmod(fd, 0o644)
         finally:
             os.close(fd)
         os.rename(tmp_path, path)
         log.debug("Wrote metrics to %s", path)
     except OSError:
         log.exception("Failed to write textfile %s", path)
-        # Clean up temp file on failure
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass

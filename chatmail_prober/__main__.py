@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .metrics import update_metrics
 from .output import start_exporter_server, write_textfile
-from .prober import run_probe
+from .prober import ProbeResult, run_probe
 
 log = logging.getLogger("chatmail_prober")
 
@@ -165,7 +165,7 @@ def check_relays_alive(relays, args):
     log.info("Checking %d relays with self-probe...", len(relays))
     cache_dir = Path(args.cache_dir).expanduser()
 
-    with ThreadPoolExecutor(max_workers=len(relays)) as pool:
+    with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
         futures = {
             pool.submit(run_probe, r, r, 1, args.ping_interval,
                         str(cache_dir / "alive-check"), args.timeout): r
@@ -175,10 +175,10 @@ def check_relays_alive(relays, args):
         for future in as_completed(futures):
             relay = futures[future]
             result = future.result()
+            update_metrics(result)
             if result.error:
                 log.warning("DEAD %s: %s", relay, result.error)
                 dead.add(relay)
-                update_metrics(result)  # records probe_success=0 in textfile
             else:
                 log.info("OK   %s (%.0fms)", relay, result.rtts_ms[0] if result.rtts_ms else 0)
 
@@ -219,7 +219,11 @@ def run_round(relays, args, executors):
     for future in as_completed(all_futures):
         completed += 1
         src, dst = all_futures[future]
-        result = future.result()
+        try:
+            result = future.result()
+        except Exception as exc:
+            log.exception("Worker crashed for %s -> %s", src, dst)
+            result = ProbeResult(src, dst, error=str(exc))
         update_metrics(result)
         if result.error:
             log.warning("[%d/%d] %s -> %s: ERROR %s", completed, len(pairs), src, dst, result.error)
@@ -308,10 +312,12 @@ def main(argv=None):
                 log.info("Sleeping %.0fs until next round", remaining)
                 time.sleep(remaining)
     except KeyboardInterrupt:
-        log.info("Interrupted")
+        log.info("Interrupted, writing partial metrics")
+        if args.textfile:
+            write_textfile(args.textfile)
     finally:
         for ex in executors:
-            ex.shutdown(wait=False)
+            ex.shutdown(wait=True, cancel_futures=True)
 
 
 if __name__ == "__main__":
