@@ -197,7 +197,13 @@
               { "color": "orange", "value": 10 }
             ]
           }
-        }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Value #B" },
+            "properties": [{ "id": "unit", "value": "percentunit" }]
+          }
+        ]
       },
       "options": {
         "sourceField": "destination",
@@ -208,11 +214,31 @@
         "txtLength": 14,
         "txtSize": 10,
         "nullColor": "#d44a3a",
-        "defaultColor": "#d44a3a"
+        "defaultColor": "#d44a3a",
+        "extraTooltipFields": "Loss,p10,p90"
       },
       "targets": [
         {
-          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\"}",
+          "refId": "A",
+          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "C",
+          "expr": "cmping_rtt_p10_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "D",
+          "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
           "format": "table",
           "instant": true
         }
