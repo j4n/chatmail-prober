@@ -220,25 +220,25 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true
         },
         {
           "refId": "B",
-          "expr": "cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "expr": "cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true
         },
         {
           "refId": "C",
-          "expr": "cmping_rtt_p10_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "expr": "cmping_rtt_p10_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true
         },
         {
           "refId": "D",
-          "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true
         }
@@ -310,19 +310,19 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "expr": "cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true
         },
         {
           "refId": "B",
-          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true
         },
         {
           "refId": "C",
-          "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true
         }
@@ -419,7 +419,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"} > 0",
+          "expr": "cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\"} > 0",
           "legendFormat": "{{source}} -> {{destination}}"
         }
       ]
@@ -453,7 +453,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "legendFormat": "{{source}} -> {{destination}}"
         }
       ]
@@ -481,7 +481,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "legendFormat": "{{source}} -> {{destination}}"
         }
       ]
@@ -509,7 +509,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_rtt_stddev_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "expr": "cmping_rtt_stddev_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "legendFormat": "{{source}} -> {{destination}}"
         }
       ]
@@ -553,7 +553,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_send_errors_total{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"} > 0",
+          "expr": "cmping_send_errors_total{source=~\"$source\", destination=~\"$destination\"} > 0",
           "format": "table",
           "instant": true
         }
@@ -594,7 +594,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_account_setup_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "expr": "cmping_account_setup_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "legendFormat": "{{source}} -> {{destination}}"
         }
       ]
