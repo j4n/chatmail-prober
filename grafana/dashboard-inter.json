@@ -215,7 +215,8 @@
         "txtSize": 10,
         "nullColor": "#d44a3a",
         "defaultColor": "#d44a3a",
-        "extraTooltipFields": "Loss,p10,p90"
+        "extraTooltipFields": "Loss,p10,p90",
+        "fitToPanel": true
       },
       "targets": [
         {
