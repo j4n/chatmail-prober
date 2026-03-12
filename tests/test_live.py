@@ -11,6 +11,7 @@ Tests adapt to however many relays are provided:
 """
 
 import os
+import threading
 
 import pytest
 
@@ -44,7 +45,7 @@ class TestLiveSelfLoop:
 
     @pytest.mark.parametrize("relay", RELAYS, ids=_self_loop_ids())
     def test_self_loop(self, relay, tmp_path):
-        result = run_probe(relay, relay, count=3, cache_dir=str(tmp_path / "cache"))
+        result = run_probe(relay, relay, count=3, accounts_dir=str(tmp_path / "cache"))
 
         assert result.error is None, f"{relay} self-loop failed: {result.error}"
         assert result.sent == 3
@@ -67,7 +68,7 @@ class TestLiveCrossRelay:
         ids=_cross_pair_ids(),
     )
     def test_pair(self, src, dst, tmp_path):
-        result = run_probe(src, dst, count=2, cache_dir=str(tmp_path / "cache"))
+        result = run_probe(src, dst, count=2, accounts_dir=str(tmp_path / "cache"))
 
         assert result.error is None, f"{src} -> {dst} failed: {result.error}"
         assert result.sent == 2
@@ -83,7 +84,22 @@ class TestLiveErrorHandling:
     def test_nonexistent_relay(self, tmp_path):
         result = run_probe(
             "nonexistent.invalid", RELAYS[0],
-            count=1, cache_dir=str(tmp_path / "cache"),
+            count=1, accounts_dir=str(tmp_path / "cache"),
         )
         assert result.error is not None
         assert result.sent == 0
+
+
+@live
+class TestThreadCleanup:
+    """Verify that threads don't accumulate across probes."""
+
+    def test_no_thread_leak(self, tmp_path):
+        baseline = threading.active_count()
+        for i in range(5):
+            run_probe(RELAYS[0], RELAYS[0], count=1,
+                      accounts_dir=str(tmp_path / "cache"), timeout=45)
+        # Threads should not grow linearly with probe count.
+        assert threading.active_count() <= baseline + 4, (
+            f"Thread leak: started at {baseline}, now {threading.active_count()}"
+        )
