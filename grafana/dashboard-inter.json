@@ -19,7 +19,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "id": 65,
+  "id": 74,
   "links": [],
   "panels": [
     {
@@ -519,9 +519,45 @@
               {
                 "id": "custom.cellOptions",
                 "value": {
-                  "type": "color-background",
-                  "mode": "gradient"
+                  "mode": "gradient",
+                  "type": "color-background"
                 }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Median"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 105
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p90"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 102
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p10"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 97
               }
             ]
           }
@@ -593,19 +629,19 @@
               "Time 1": true,
               "Time 2": true,
               "Time 3": true,
+              "Time 4": true,
               "__name__": true,
               "instance": true,
               "job": true,
-              "probe_type": true,
-              "Time 4": true
+              "probe_type": true
             },
             "indexByName": {
-              "source": 0,
+              "Loss": 5,
+              "Median": 3,
               "destination": 1,
               "p10": 2,
-              "Median": 3,
               "p90": 4,
-              "Loss": 5
+              "source": 0
             },
             "renameByName": {
               "Value #A": "Loss",
@@ -635,6 +671,12 @@
                 "aggregations": [],
                 "operation": "groupby"
               },
+              "p10": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
               "p90": {
                 "aggregations": [
                   "lastNotNull"
@@ -644,12 +686,6 @@
               "source": {
                 "aggregations": [],
                 "operation": "groupby"
-              },
-              "p10": {
-                "aggregations": [
-                  "lastNotNull"
-                ],
-                "operation": "aggregate"
               }
             }
           }
@@ -660,8 +696,8 @@
             "renameByName": {
               "Loss (lastNotNull)": "Loss",
               "Median (lastNotNull)": "Median",
-              "p90 (lastNotNull)": "p90",
-              "p10 (lastNotNull)": "p10"
+              "p10 (lastNotNull)": "p10",
+              "p90 (lastNotNull)": "p90"
             }
           }
         }
@@ -707,8 +743,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "yellow",
@@ -786,8 +821,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "yellow",
@@ -844,38 +878,17 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 42
       },
-      "id": 14,
-      "title": "Errors & Setup",
+      "id": 22,
+      "panels": [],
+      "title": "RTT Timelines",
       "type": "row"
     },
     {
-      "id": 22,
-      "title": "RTT Timelines",
-      "type": "row",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 42
-      },
-      "panels": []
-    },
-    {
-      "id": 20,
-      "title": "Outbound RTT (avg to all destinations)",
-      "type": "timeseries",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
-      },
-      "gridPos": {
-        "h": 12,
-        "w": 12,
-        "x": 0,
-        "y": 43
       },
       "fieldConfig": {
         "defaults": {
@@ -883,24 +896,44 @@
             "mode": "thresholds"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
             "drawStyle": "line",
             "fillOpacity": 0,
             "gradientMode": "scheme",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 3,
+            "scaleDistribution": {
+              "log": 10,
+              "type": "log"
+            },
             "showPoints": "never",
             "spanNulls": true,
-            "scaleDistribution": {
-              "type": "log",
-              "log": 10
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           },
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "blue",
@@ -944,8 +977,8 @@
               {
                 "id": "color",
                 "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#cccccc"
+                  "fixedColor": "#cccccc",
+                  "mode": "fixed"
                 }
               },
               {
@@ -971,8 +1004,8 @@
               {
                 "id": "color",
                 "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#cccccc"
+                  "fixedColor": "#cccccc",
+                  "mode": "fixed"
                 }
               },
               {
@@ -987,45 +1020,181 @@
           }
         ]
       },
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "id": 20,
       "options": {
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        },
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
           "calcs": [
             "lastNotNull"
           ],
+          "displayMode": "table",
+          "placement": "right",
           "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "targets": [
         {
-          "refId": "A",
           "expr": "avg by(source)(cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
-          "legendFormat": "{{source}}"
+          "legendFormat": "{{source}}",
+          "refId": "A"
         },
         {
-          "refId": "B",
           "expr": "avg(cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
-          "legendFormat": "p90"
+          "legendFormat": "p90",
+          "refId": "B"
         },
         {
-          "refId": "C",
           "expr": "avg(cmping_rtt_p10_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
-          "legendFormat": "p10"
+          "legendFormat": "p10",
+          "refId": "C"
         }
-      ]
+      ],
+      "title": "Outbound RTT (avg to all destinations)",
+      "type": "timeseries"
     },
     {
-      "id": 21,
-      "title": "Inbound RTT (avg from all sources)",
-      "type": "timeseries",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "scheme",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 3,
+            "scaleDistribution": {
+              "log": 10,
+              "type": "log"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "blue",
+                "value": 1
+              },
+              {
+                "color": "yellow",
+                "value": 3
+              },
+              {
+                "color": "orange",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p90"
+            },
+            "properties": [
+              {
+                "id": "custom.fillBelowTo",
+                "value": "p10"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 15
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#cccccc",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": false
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p10"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#cccccc",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": false
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 12,
@@ -1033,163 +1202,59 @@
         "x": 12,
         "y": 43
       },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "scheme",
-            "lineWidth": 1,
-            "pointSize": 3,
-            "showPoints": "never",
-            "spanNulls": true,
-            "scaleDistribution": {
-              "type": "log",
-              "log": 10
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "blue",
-                "value": 1
-              },
-              {
-                "color": "yellow",
-                "value": 3
-              },
-              {
-                "color": "orange",
-                "value": 5
-              },
-              {
-                "color": "red",
-                "value": 10
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p90"
-            },
-            "properties": [
-              {
-                "id": "custom.fillBelowTo",
-                "value": "p10"
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 15
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 0
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#cccccc"
-                }
-              },
-              {
-                "id": "custom.hideFrom",
-                "value": {
-                  "legend": true,
-                  "tooltip": true,
-                  "viz": false
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p10"
-            },
-            "properties": [
-              {
-                "id": "custom.lineWidth",
-                "value": 0
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#cccccc"
-                }
-              },
-              {
-                "id": "custom.hideFrom",
-                "value": {
-                  "legend": true,
-                  "tooltip": true,
-                  "viz": false
-                }
-              }
-            ]
-          }
-        ]
-      },
+      "id": 21,
       "options": {
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        },
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
           "calcs": [
             "lastNotNull"
           ],
+          "displayMode": "table",
+          "placement": "right",
           "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "targets": [
         {
-          "refId": "A",
           "expr": "avg by(destination)(cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
-          "legendFormat": "{{destination}}"
+          "legendFormat": "{{destination}}",
+          "refId": "A"
         },
         {
-          "refId": "B",
           "expr": "avg(cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
-          "legendFormat": "p90"
+          "legendFormat": "p90",
+          "refId": "B"
         },
         {
-          "refId": "C",
           "expr": "avg(cmping_rtt_p10_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
-          "legendFormat": "p10"
+          "legendFormat": "p10",
+          "refId": "C"
         }
-      ]
+      ],
+      "title": "Inbound RTT (avg from all sources)",
+      "type": "timeseries"
     },
     {
-      "id": 23,
-      "title": "Account Setup Time",
-      "type": "esnet-matrix-panel",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 55
+      },
+      "id": 14,
+      "title": "Errors & Setup",
+      "type": "row"
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "description": "Account setup time per (source, destination) pair. Green = fast, yellow = >2s, orange = >30s, red = >120s.",
-      "gridPos": {
-        "h": 20,
-        "w": 12,
-        "x": 0,
-        "y": 56
-      },
       "fieldConfig": {
         "defaults": {
           "mappings": [],
@@ -1197,8 +1262,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "yellow",
@@ -1218,6 +1282,13 @@
         },
         "overrides": []
       },
+      "gridPos": {
+        "h": 20,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      },
+      "id": 23,
       "options": {
         "addUrl": false,
         "cellPadding": 10,
@@ -1245,7 +1316,9 @@
           "instant": true,
           "refId": "A"
         }
-      ]
+      ],
+      "title": "Account Setup Time",
+      "type": "esnet-matrix-panel"
     },
     {
       "datasource": {
@@ -1274,8 +1347,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "yellow",
@@ -1407,8 +1479,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Chatmail Relay Interop \u2014 Cross-relay",
+  "title": "Chatmail Relay: Interoperability Cross-relay",
   "uid": "chatmail-inter",
-  "version": 18,
+  "version": 4,
   "weekStart": ""
 }
