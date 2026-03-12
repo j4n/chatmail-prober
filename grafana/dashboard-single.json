@@ -1097,8 +1097,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green",
-                    "value": null
+                    "color": "green"
                   },
                   {
                     "color": "yellow",
@@ -1161,8 +1160,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "red",
-                    "value": null
+                    "color": "red"
                   },
                   {
                     "color": "yellow",
@@ -1224,8 +1222,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green",
-                    "value": null
+                    "color": "green"
                   },
                   {
                     "color": "yellow",
@@ -1287,8 +1284,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green",
-                    "value": null
+                    "color": "green"
                   },
                   {
                     "color": "yellow",
@@ -1395,8 +1391,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green",
-                    "value": null
+                    "color": "green"
                   },
                   {
                     "color": "yellow",
@@ -1512,8 +1507,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green",
-                    "value": null
+                    "color": "green"
                   },
                   {
                     "color": "yellow",
@@ -1603,7 +1597,7 @@
       },
       {
         "current": {
-          "selected": true,
+          "selected": false,
           "text": "nine.testrun.org",
           "value": "nine.testrun.org"
         },
@@ -1627,7 +1621,7 @@
       },
       {
         "current": {
-          "selected": true,
+          "selected": false,
           "text": "tarpit.fun",
           "value": "tarpit.fun"
         },
@@ -1657,8 +1651,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Chatmail: Single Relay",
+  "title": "Relay Network: Single Relay",
   "uid": "chatmail-single",
-  "version": 7,
+  "version": 9,
   "weekStart": ""
 }
