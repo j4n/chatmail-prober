@@ -1,22 +1,26 @@
 .PHONY: install install-dev test clean
 
-VENV   ?= .venv
-PYTHON ?= python3
+# uv manages the venv and lockfile; scripts in .venv/bin/ get shebangs
+# pointing to the local Python, so the venv must be created on the machine
+# that will run the prober.  Never copy .venv between hosts.
+#
+# If uv is not yet installed, the install targets will fetch and run
+# the installer from https://astral.sh/uv, then invoke the binary
+# directly from its install location (~/.local/bin/uv).
 
-install: $(VENV)/bin/pip
-	$(VENV)/bin/pip install ./cmping-src
-	$(VENV)/bin/pip install .
+UV := $(shell command -v uv 2>/dev/null || echo $(HOME)/.local/bin/uv)
 
-install-dev: $(VENV)/bin/pip
-	$(VENV)/bin/pip install ./cmping-src
-	$(VENV)/bin/pip install -e '.[dev]'
+$(HOME)/.local/bin/uv:
+	curl -LsSf https://astral.sh/uv/install.sh | sh
 
-$(VENV)/bin/pip:
-	$(PYTHON) -m venv $(VENV)
-	$(VENV)/bin/pip install --upgrade pip
+install: $(UV)
+	$(UV) sync
 
-test: install-dev
-	$(VENV)/bin/pytest tests/ --ignore=tests/test_live.py
+install-dev: $(UV)
+	$(UV) sync --dev
+
+test:
+	$(UV) run python -m pytest tests/ --ignore=tests/test_live.py
 
 clean:
-	rm -rf $(VENV) *.egg-info dist
+	rm -rf .venv *.egg-info dist
