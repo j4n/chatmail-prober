@@ -126,18 +126,22 @@ where you only want errors.
 
 ### systemd
 
-```ini
-[Unit]
-Description=chatmail-prober
-After=network-online.target
+A ready-to-use unit file is in `systemd/chatmail-prober.service`.
 
-[Service]
-ExecStart=/opt/chatmail-prober/.venv/bin/chatmail-prober --relays /etc/chatmail-prober/relays.txt
-Restart=always
-RestartSec=30
+```bash
+# Create an unprivileged system user:
+sudo useradd -r -s /usr/sbin/nologin -d /nonexistent chatmail-prober
 
-[Install]
-WantedBy=multi-user.target
+sudo cp systemd/chatmail-prober.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now chatmail-prober.service
+```
+
+Edit `ExecStart` in the unit to adjust paths or flags for your deployment.
+
+```bash
+# Graceful restart (waits for the current probe round to finish):
+sudo systemctl reload chatmail-prober
 ```
 
 ### Prometheus scrape config
