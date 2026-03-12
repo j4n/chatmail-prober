@@ -88,8 +88,8 @@ def parse_args(argv=None):
     parser.add_argument(
         "--timeout",
         type=int,
-        default=45,
-        help="per-pair receive timeout in seconds (default: 45)",
+        default=60,
+        help="per-pair receive timeout in seconds (default: 60)",
     )
     parser.add_argument(
         "--workers",
@@ -195,19 +195,33 @@ def check_relays_alive(relays, args):
     with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
         futures = {
             pool.submit(run_probe, r, r, 1, args.ping_interval,
-                        str(cache_dir / "alive-check"), args.timeout, args.verbose): r
+                        str(cache_dir / "alive-check" / r), args.timeout, args.verbose): r
             for r in relays
         }
         dead = set()
-        for future in as_completed(futures):
-            relay = futures[future]
-            result = future.result()
-            update_metrics(result)
-            if result.error:
-                log.warning("DEAD %s: %s", relay, result.error)
-                dead.add(relay)
-            else:
-                log.info("OK   %s (%.0fms)", relay, result.rtts_ms[0] if result.rtts_ms else 0)
+        completed = set()
+        try:
+            for future in as_completed(futures, timeout=args.timeout * 2):
+                relay = futures[future]
+                completed.add(relay)
+                result = future.result()
+                update_metrics(result)
+                if result.error:
+                    log.warning("DEAD %s: %s", relay, result.error)
+                    dead.add(relay)
+                else:
+                    log.info("OK   %s (%.0fms)", relay, result.rtts_ms[0] if result.rtts_ms else 0)
+                remaining = [r for r in relays if r not in completed and r not in dead]
+                if remaining:
+                    names = ", ".join(remaining[:5])
+                    suffix = "..." if len(remaining) > 5 else ""
+                    log.info("  %d remaining: %s%s", len(remaining), names, suffix)
+        except TimeoutError:
+            for future, relay in futures.items():
+                if relay not in completed and relay not in dead:
+                    log.warning("TIMEOUT %s: alive check exceeded global deadline", relay)
+                    dead.add(relay)
+                    future.cancel()
 
     alive = [r for r in relays if r not in dead]
     if dead:
@@ -331,16 +345,9 @@ def main(argv=None):
         lock.unlink(missing_ok=True)
         log.debug("Removed stale lock: %s", lock)
 
-    relays = check_relays_alive(relays, args)
-    if not relays:
-        raise SystemExit("No reachable relays -- aborting")
-    log.info("%d relay(s) alive, starting matrix probe", len(relays))
-
-    if args.port:
-        start_exporter_server(args.port)
-
-    # Create executors once; reused across rounds to keep worker threads warm.
-    executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
+    # Executors start empty; populated after alive check. Signal handlers
+    # iterate this list, so an empty list is safe during the alive check.
+    executors = []
 
     # Graceful shutdown: first SIGINT/SIGTERM cancels pending work and kills
     # rpc-server subprocesses to unblock running probes; second kills immediately.
@@ -370,6 +377,17 @@ def main(argv=None):
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGUSR1, _handle_usr1)
+
+    relays = check_relays_alive(relays, args)
+    if not relays:
+        raise SystemExit("No reachable relays -- aborting")
+    log.info("%d relay(s) alive, starting matrix probe", len(relays))
+
+    if args.port:
+        start_exporter_server(args.port)
+
+    # Create executors; reused across rounds to keep worker threads warm.
+    executors.extend(ThreadPoolExecutor(max_workers=1) for _ in range(args.workers))
 
     try:
         while not shutdown_event.is_set():
