@@ -817,55 +817,57 @@
         "h": 1,
         "w": 24,
         "x": 0,
+        "y": 56
+      },
+      "id": 14,
+      "title": "Errors & Setup",
+      "type": "row"
+    },
+    {
+      "id": 22,
+      "title": "RTT Timelines",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
         "y": 43
       },
-      "id": 10,
-      "title": "Latency",
-      "type": "row"
-    },    {
+      "panels": []
+    },
+    {
+      "id": 20,
+      "title": "Outbound RTT (avg to all destinations)",
+      "type": "timeseries",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 0,
+        "y": 44
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
             "drawStyle": "line",
             "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
+            "gradientMode": "scheme",
             "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "log": 10,
-              "type": "log"
-            },
-            "showPoints": "auto",
+            "pointSize": 3,
+            "showPoints": "never",
             "spanNulls": true,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
             }
           },
-          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -874,242 +876,245 @@
                 "value": null
               },
               {
+                "color": "blue",
+                "value": 1
+              },
+              {
+                "color": "yellow",
+                "value": 3
+              },
+              {
+                "color": "orange",
+                "value": 5
+              },
+              {
                 "color": "red",
-                "value": 80
+                "value": 10
               }
             ]
           },
           "unit": "s"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p90"
+            },
+            "properties": [
+              {
+                "id": "custom.fillBelowTo",
+                "value": "p10"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 15
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#cccccc"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p10"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#cccccc"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ],
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg by(source)(cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
+          "legendFormat": "{{source}}"
+        },
+        {
+          "refId": "B",
+          "expr": "avg(cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
+          "legendFormat": "p90"
+        },
+        {
+          "refId": "C",
+          "expr": "avg(cmping_rtt_p10_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
+          "legendFormat": "p10"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "title": "Inbound RTT (avg from all sources)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
       },
       "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
+        "h": 12,
+        "w": 12,
+        "x": 12,
         "y": 44
       },
-      "id": 11,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\"}",
-          "legendFormat": "{{source}} -> {{destination}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Median RTT",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
             "drawStyle": "line",
             "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
+            "gradientMode": "scheme",
             "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "log": 10,
-              "type": "log"
-            },
-            "showPoints": "auto",
+            "pointSize": 3,
+            "showPoints": "never",
             "spanNulls": true,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
             }
           },
-          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "blue",
+                "value": 1
+              },
+              {
+                "color": "yellow",
+                "value": 3
+              },
+              {
+                "color": "orange",
+                "value": 5
               },
               {
                 "color": "red",
-                "value": 80
+                "value": 10
               }
             ]
           },
           "unit": "s"
         },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 54
-      },
-      "id": 12,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\"}",
-          "legendFormat": "{{source}} -> {{destination}}",
-          "refId": "A"
-        }
-      ],
-      "title": "p90 RTT",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p90"
             },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "log": 10,
-              "type": "log"
-            },
-            "showPoints": "auto",
-            "spanNulls": true,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+            "properties": [
               {
-                "color": "green"
+                "id": "custom.fillBelowTo",
+                "value": "p10"
               },
               {
-                "color": "red",
-                "value": 80
+                "id": "custom.fillOpacity",
+                "value": 15
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#cccccc"
+                }
               }
             ]
           },
-          "unit": "s"
-        },
-        "overrides": []
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p10"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#cccccc"
+                }
+              }
+            ]
+          }
+        ]
       },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 64
-      },
-      "id": 13,
       "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
         "tooltip": {
           "mode": "multi",
           "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ],
+          "showLegend": true
         }
       },
       "targets": [
         {
-          "expr": "cmping_rtt_stddev_seconds{source=~\"$source\", destination=~\"$destination\"}",
-          "legendFormat": "{{source}} -> {{destination}}",
-          "refId": "A"
+          "refId": "A",
+          "expr": "avg by(destination)(cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
+          "legendFormat": "{{destination}}"
+        },
+        {
+          "refId": "B",
+          "expr": "avg(cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
+          "legendFormat": "p90"
+        },
+        {
+          "refId": "C",
+          "expr": "avg(cmping_rtt_p10_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
+          "legendFormat": "p10"
         }
-      ],
-      "title": "Stddev",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 74
-      },
-      "id": 14,
-      "title": "Errors & Setup",
-      "type": "row"
+      ]
     },
     {
       "datasource": {
@@ -1166,7 +1171,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 75
+        "y": 57
       },
       "id": 15,
       "options": {
@@ -1228,7 +1233,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 75
+        "y": 57
       },
       "id": 16,
       "options": {
@@ -1306,7 +1311,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 83
+        "y": 65
       },
       "id": 18,
       "options": {
@@ -1386,7 +1391,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 83
+        "y": 65
       },
       "id": 19,
       "options": {
@@ -1494,8 +1499,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Chatmail Relay Interop — Cross-relay",
+  "title": "Chatmail Relay Interop \u2014 Cross-relay",
   "uid": "chatmail-inter",
-  "version": 12,
+  "version": 14,
   "weekStart": ""
 }
