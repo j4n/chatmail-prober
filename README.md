@@ -131,20 +131,28 @@ Unit files are in `systemd/`.  The prober writes metrics to
 the file into node-exporter's textfile directory on each write.
 
 ```bash
-# Create an unprivileged system user:
-sudo useradd -r -s /usr/sbin/nologin -d /nonexistent chatmail-prober
+# 1. Create home dir and system user (home doubles as uv install root)
+sudo mkdir /opt/chatmail-prober
+sudo useradd -r -s /usr/sbin/nologin -d /opt/chatmail-prober chatmail-prober
+sudo chown chatmail-prober:chatmail-prober /opt/chatmail-prober
 
-sudo cp systemd/chatmail-prober.service \
-       systemd/chatmail-prober-prom-copy.path \
-       systemd/chatmail-prober-prom-copy.service \
+# 2. Clone the repo and install dependencies as the service user
+sudo -u chatmail-prober git clone https://github.com/chatmail/chatmail-prober \
+    /opt/chatmail-prober/chatmail-prober
+sudo -u chatmail-prober sh -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+sudo -u chatmail-prober sh -c 'cd /opt/chatmail-prober/chatmail-prober && make install'
+
+# 3. Install and start the systemd units
+sudo cp /opt/chatmail-prober/chatmail-prober/systemd/chatmail-prober.service \
+       /opt/chatmail-prober/chatmail-prober/systemd/chatmail-prober-prom-copy.path \
+       /opt/chatmail-prober/chatmail-prober/systemd/chatmail-prober-prom-copy.service \
        /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now chatmail-prober.service
 sudo systemctl enable --now chatmail-prober-prom-copy.path
 ```
 
-Edit `ExecStart` and `WorkingDirectory` in the service unit to match your
-deployment paths.  See TECHNICAL.md Section 14 for full details.
+See TECHNICAL.md Section 14 for path layout and full details.
 
 ```bash
 # Graceful restart (waits for the current probe round to finish):

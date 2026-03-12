@@ -829,12 +829,27 @@ sudo useradd -r -s /usr/sbin/nologin -d /opt/chatmail-prober chatmail-prober
 | `/var/tmp/chatmail-prober.prom` | Textfile written atomically by the prober |
 | `/var/lib/prometheus/node-exporter/chatmail-prober.prom` | Destination for node-exporter |
 
-### Installing
+### Bootstrap
 
 ```bash
-sudo cp systemd/chatmail-prober.service \
-       systemd/chatmail-prober-prom-copy.path \
-       systemd/chatmail-prober-prom-copy.service \
+# Create home dir and system user (home doubles as uv install root)
+sudo mkdir /opt/chatmail-prober
+sudo useradd -r -s /usr/sbin/nologin -d /opt/chatmail-prober chatmail-prober
+sudo chown chatmail-prober:chatmail-prober /opt/chatmail-prober
+
+# Clone the repo and install dependencies as the service user
+sudo -u chatmail-prober git clone https://github.com/chatmail/chatmail-prober \
+    /opt/chatmail-prober/chatmail-prober
+sudo -u chatmail-prober sh -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+sudo -u chatmail-prober sh -c 'cd /opt/chatmail-prober/chatmail-prober && make install'
+```
+
+### Installing systemd units
+
+```bash
+sudo cp /opt/chatmail-prober/chatmail-prober/systemd/chatmail-prober.service \
+       /opt/chatmail-prober/chatmail-prober/systemd/chatmail-prober-prom-copy.path \
+       /opt/chatmail-prober/chatmail-prober/systemd/chatmail-prober-prom-copy.service \
        /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now chatmail-prober.service
