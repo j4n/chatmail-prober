@@ -1149,170 +1149,22 @@
       ]
     },
     {
+      "id": 23,
+      "title": "Account Setup Time",
+      "type": "esnet-matrix-panel",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Pairs that have accumulated send errors. Shows total error count per pair.",
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "displayMode": "color-background-solid",
-            "filterable": true
-          },
-          "thresholds": {
-            "steps": [
-              {
-                "color": "green"
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "source"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 140
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "destination"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 140
-              }
-            ]
-          }
-        ]
-      },
+      "description": "Account setup time per (source, destination) pair. Green = fast, yellow = >2s, orange = >30s, red = >120s.",
       "gridPos": {
-        "h": 8,
+        "h": 12,
         "w": 12,
         "x": 0,
         "y": 56
       },
-      "id": 15,
-      "options": {
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": true,
-            "displayName": "Errors"
-          }
-        ]
-      },
-      "targets": [
-        {
-          "expr": "cmping_send_errors_total{source=~\"$source\", destination=~\"$destination\"} > 0",
-          "format": "table",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Send Errors (cumulative)",
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "instance": true,
-              "job": true,
-              "probe_type": true
-            },
-            "renameByName": {
-              "Value": "Errors"
-            }
-          }
-        }
-      ],
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "description": "Time spent setting up accounts on each relay pair. High on first run, near-zero on subsequent runs.",
       "fieldConfig": {
         "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "spanNulls": true
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 56
-      },
-      "id": 16,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "right"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "cmping_account_setup_seconds{source=~\"$source\", destination=~\"$destination\"}",
-          "legendFormat": "{{source}} -> {{destination}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Account Setup Time",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "description": "Account setup time per destination (avg over sources). Green=fast/zero, yellow=>2s, orange=>30s, red=>120s.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "fillOpacity": 80,
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineWidth": 0,
-            "spanNulls": false
-          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -1339,37 +1191,34 @@
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 10,
-        "w": 12,
-        "x": 0,
-        "y": 64
-      },
-      "id": 18,
       "options": {
-        "alignValue": "center",
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": false
-        },
-        "mergeValues": true,
-        "rowHeight": 0.9,
-        "showValue": "never",
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
+        "addUrl": false,
+        "cellPadding": 10,
+        "cellSize": 18,
+        "defaultColor": "#d44a3a",
+        "extraTooltipFields": "",
+        "fitToPanel": true,
+        "inputList": false,
+        "legendType": "range",
+        "nullColor": "#d44a3a",
+        "showLegend": false,
+        "sourceField": "destination",
+        "sourceText": "From",
+        "targetField": "source",
+        "targetText": "To",
+        "txtLength": 18,
+        "txtSize": 12,
+        "valueField": "Value",
+        "valueText": "Setup time"
       },
       "targets": [
         {
-          "expr": "avg by (destination) (cmping_account_setup_seconds{source=~\"$source\", destination=~\"$destination\"})",
-          "legendFormat": "{{destination}}",
+          "expr": "cmping_account_setup_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "format": "table",
+          "instant": true,
           "refId": "A"
         }
-      ],
-      "title": "Account Setup Time (avg over sources)",
-      "type": "state-timeline"
+      ]
     },
     {
       "datasource": {
@@ -1420,10 +1269,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 10,
+        "h": 12,
         "w": 12,
         "x": 12,
-        "y": 64
+        "y": 56
       },
       "id": 19,
       "options": {
@@ -1533,6 +1382,6 @@
   "timezone": "browser",
   "title": "Chatmail Relay Interop \u2014 Cross-relay",
   "uid": "chatmail-inter",
-  "version": 16,
+  "version": 17,
   "weekStart": ""
 }
