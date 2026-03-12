@@ -658,11 +658,11 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Shows only pairs with packet loss (loss_ratio > 0). Color indicates severity.",
+      "description": "Average outbound loss per source host (avg over all destinations). Yellow=any loss, orange=>40%, red=>80%.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "continuous-GrYlRd"
+            "mode": "thresholds"
           },
           "custom": {
             "fillOpacity": 80,
@@ -675,55 +675,25 @@
             "lineWidth": 0,
             "spanNulls": false
           },
-          "mappings": [
-            {
-              "options": {
-                "1": {
-                  "color": "dark-red",
-                  "text": "FAIL"
-                },
-                "0.2": {
-                  "color": "yellow",
-                  "text": "1 lost"
-                },
-                "0.4": {
-                  "color": "orange",
-                  "text": "2 lost"
-                },
-                "0.6": {
-                  "color": "#ff6600",
-                  "text": "3 lost"
-                },
-                "0.8": {
-                  "color": "red",
-                  "text": "4 lost"
-                }
-              },
-              "type": "value"
-            }
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "yellow",
+                "color": "green",
                 "value": null
               },
               {
-                "color": "orange",
-                "value": 0.3
+                "color": "yellow",
+                "value": 0.05
               },
               {
-                "color": "#ff6600",
-                "value": 0.5
+                "color": "orange",
+                "value": 0.2
               },
               {
                 "color": "red",
-                "value": 0.7
-              },
-              {
-                "color": "dark-red",
-                "value": 0.9
+                "value": 0.5
               }
             ]
           }
@@ -731,8 +701,8 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 10,
-        "w": 24,
+        "h": 16,
+        "w": 12,
         "x": 0,
         "y": 27
       },
@@ -742,11 +712,11 @@
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "mergeValues": true,
-        "rowHeight": 0.8,
-        "showValue": "auto",
+        "rowHeight": 0.9,
+        "showValue": "never",
         "tooltip": {
           "mode": "single",
           "sort": "none"
@@ -754,12 +724,91 @@
       },
       "targets": [
         {
-          "expr": "cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\"} > 0",
-          "legendFormat": "{{source}} -> {{destination}}",
+          "expr": "avg by (source) (cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
+          "legendFormat": "{{source}}",
           "refId": "A"
         }
       ],
-      "title": "Pairs with Loss",
+      "title": "Outbound Loss (avg over destinations)",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Average inbound loss per destination host (avg over all sources). Yellow=any loss, orange=>40%, red=>80%.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.05
+              },
+              {
+                "color": "orange",
+                "value": 0.2
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 16,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "id": 17,
+      "options": {
+        "alignValue": "center",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "never",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "avg by (destination) (cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
+          "legendFormat": "{{destination}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Inbound Loss (avg over sources)",
       "type": "state-timeline"
     },
     {
@@ -768,13 +817,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 37
+        "y": 43
       },
       "id": 10,
       "title": "Latency",
       "type": "row"
-    },
-    {
+    },    {
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -839,7 +887,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 44
       },
       "id": 11,
       "options": {
@@ -931,7 +979,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 48
+        "y": 54
       },
       "id": 12,
       "options": {
@@ -1023,7 +1071,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 64
       },
       "id": 13,
       "options": {
@@ -1057,7 +1105,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 68
+        "y": 74
       },
       "id": 14,
       "title": "Errors & Setup",
@@ -1118,7 +1166,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 69
+        "y": 75
       },
       "id": 15,
       "options": {
@@ -1180,7 +1228,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 69
+        "y": 75
       },
       "id": 16,
       "options": {
@@ -1205,6 +1253,166 @@
       ],
       "title": "Account Setup Time",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Account setup time per destination (avg over sources). Green=fast/zero, yellow=>2s, orange=>30s, red=>120s.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2
+              },
+              {
+                "color": "orange",
+                "value": 30
+              },
+              {
+                "color": "red",
+                "value": 120
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 83
+      },
+      "id": 18,
+      "options": {
+        "alignValue": "center",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "never",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "avg by (destination) (cmping_account_setup_seconds{source=~\"$source\", destination=~\"$destination\"})",
+          "legendFormat": "{{destination}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Account Setup Time (avg over sources)",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Send error rate per source (sum over destinations). Green=no errors, yellow=rare, orange=frequent, red=high.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.001
+              },
+              {
+                "color": "orange",
+                "value": 0.01
+              },
+              {
+                "color": "red",
+                "value": 0.1
+              }
+            ]
+          },
+          "unit": "errors/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 83
+      },
+      "id": 19,
+      "options": {
+        "alignValue": "center",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "never",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (source) (rate(cmping_send_errors_total{source=~\"$source\", destination=~\"$destination\"}[5m]))",
+          "legendFormat": "{{source}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Send Errors (rate per source)",
+      "type": "state-timeline"
     }
   ],
   "refresh": "5m",
@@ -1288,6 +1496,6 @@
   "timezone": "browser",
   "title": "Chatmail Relay Interop — Cross-relay",
   "uid": "chatmail-inter",
-  "version": 6,
+  "version": 12,
   "weekStart": ""
 }
