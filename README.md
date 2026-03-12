@@ -137,7 +137,8 @@ sudo useradd -r -s /usr/sbin/nologin -d /opt/chatmail-prober chatmail-prober
 sudo chown chatmail-prober:chatmail-prober /opt/chatmail-prober
 
 # 2. Clone the repo and install dependencies as the service user
-sudo -u chatmail-prober git clone https://github.com/chatmail/chatmail-prober \
+sudo -u chatmail-prober git clone --recurse-submodules \
+    https://github.com/chatmail/chatmail-prober \
     /opt/chatmail-prober/chatmail-prober
 sudo -u chatmail-prober sh -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
 sudo -u chatmail-prober sh -c 'cd /opt/chatmail-prober/chatmail-prober && make install'
