@@ -126,18 +126,26 @@ where you only want errors.
 
 ### systemd
 
-A ready-to-use unit file is in `systemd/chatmail-prober.service`.
+Unit files are in `systemd/`.  The prober writes metrics to
+`/var/tmp/chatmail-prober.prom`; a path-activated oneshot service copies
+the file into node-exporter's textfile directory on each write.
 
 ```bash
 # Create an unprivileged system user:
 sudo useradd -r -s /usr/sbin/nologin -d /nonexistent chatmail-prober
 
-sudo cp systemd/chatmail-prober.service /etc/systemd/system/
+sudo cp systemd/chatmail-prober.service \
+       systemd/chatmail-prober-prom-copy.path \
+       systemd/chatmail-prober-prom-copy.service \
+       /etc/systemd/system/
+sudo cp relays.txt /var/lib/chatmail-prober/relays.txt
 sudo systemctl daemon-reload
 sudo systemctl enable --now chatmail-prober.service
+sudo systemctl enable --now chatmail-prober-prom-copy.path
 ```
 
-Edit `ExecStart` in the unit to adjust paths or flags for your deployment.
+Edit `ExecStart` and `WorkingDirectory` in the service unit to match your
+deployment paths.  See TECHNICAL.md Section 14 for full details.
 
 ```bash
 # Graceful restart (waits for the current probe round to finish):

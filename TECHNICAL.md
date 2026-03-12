@@ -796,37 +796,54 @@ Dead relays appear in `cmping_send_errors_total` and `cmping_probe_success=0`.
 
 ## 14. Deployment
 
+Three unit files live in `systemd/`:
+
+| File | Type | Purpose |
+|---|---|---|
+| `chatmail-prober.service` | service | Long-running prober daemon |
+| `chatmail-prober-prom-copy.path` | path | Watches the `.prom` textfile for writes |
+| `chatmail-prober-prom-copy.service` | service (oneshot) | Copies `.prom` into node-exporter's directory |
+
 ### System user
 
-The service runs as a dedicated unprivileged system account with no login
-shell and no home directory:
+The prober runs as a dedicated unprivileged system account whose home
+directory doubles as the uv install root:
 
 ```bash
-sudo useradd -r -s /usr/sbin/nologin -d /nonexistent chatmail-prober
+sudo useradd -r -s /usr/sbin/nologin -d /opt/chatmail-prober chatmail-prober
 ```
-
-### Installing the systemd unit
-
-```bash
-sudo cp systemd/chatmail-prober.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now chatmail-prober.service
-```
-
-`StateDirectory=chatmail-prober` in the unit causes systemd to create and
-own `/var/lib/chatmail-prober` with the correct permissions on first start;
-no manual `mkdir` is needed.
 
 ### Paths
 
-All paths in `ExecStart` are conventional defaults -- adjust to match your
-installation:
-
 | Path | Purpose |
 |---|---|
-| `/opt/chatmail-prober/.venv/bin/chatmail-prober` | Entry point (never copy `.venv` between hosts -- see Development Guide) |
-| `/etc/chatmail-prober/relays.txt` | Relay list (one domain per line) |
-| `/var/lib/chatmail-prober` | Per-worker account cache (`--cache-dir`) |
+| `/opt/chatmail-prober/` | Home dir for the service user; uv installs to `.local/bin/uv` here |
+| `/opt/chatmail-prober/chatmail-prober/` | Git repo (`WorkingDirectory`) |
+| `/var/lib/chatmail-prober/relays.txt` | Relay list -- place here before first start |
+| `/var/lib/chatmail-prober/` | Per-worker account cache and state (created by `StateDirectory=`) |
+| `/var/tmp/chatmail-prober.prom` | Textfile written atomically by the prober |
+| `/var/lib/prometheus/node-exporter/chatmail-prober.prom` | Destination for node-exporter |
+
+### Installing
+
+```bash
+sudo cp systemd/chatmail-prober.service \
+       systemd/chatmail-prober-prom-copy.path \
+       systemd/chatmail-prober-prom-copy.service \
+       /etc/systemd/system/
+sudo cp relays.txt /var/lib/chatmail-prober/relays.txt
+sudo systemctl daemon-reload
+sudo systemctl enable --now chatmail-prober.service
+sudo systemctl enable --now chatmail-prober-prom-copy.path
+```
+
+`StateDirectory=chatmail-prober` causes systemd to create and own
+`/var/lib/chatmail-prober` on first start; no manual `mkdir` is needed.
+
+The path unit fires `chatmail-prober-prom-copy.service` immediately each
+time `/var/tmp/chatmail-prober.prom` is modified (including the atomic
+rename the prober uses), so node-exporter always sees a fresh file within
+seconds of a completed round.
 
 ### Graceful restart
 
