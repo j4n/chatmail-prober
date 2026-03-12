@@ -28,7 +28,7 @@ from .prober import ProbeResult, run_probe
 
 log = logging.getLogger("chatmail_prober")
 
-AUTO_FETCH_URL = "https://github.com/chatmail/pages/blob/main/relays.markdown?plain=1"
+AUTO_FETCH_URL = "https://raw.githubusercontent.com/chatmail/pages/main/relays.markdown"
 
 
 def _avg_ms(rtts_ms):
