@@ -661,7 +661,7 @@ chatmail-prober [relays_file ...] [options]
 
 At least one of `relays` or `--auto-fetch` must be provided.  When both are
 given, domains from all sources are merged and deduplicated.  The default
-fetch URL is `https://raw.githubusercontent.com/chatmail/pages/main/relays.markdown`.
+fetch URL is `https://chatmail.at/relays` (parses `<a class="hilite">` entries).
 
 ### Relay list format
 

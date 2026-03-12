@@ -28,7 +28,7 @@ from .prober import ProbeResult, run_probe
 
 log = logging.getLogger("chatmail_prober")
 
-AUTO_FETCH_URL = "https://raw.githubusercontent.com/chatmail/pages/main/relays.markdown"
+AUTO_FETCH_URL = "https://chatmail.at/relays"
 
 
 def _avg_ms(rtts_ms):
@@ -54,16 +54,13 @@ def read_relay_list(paths):
 def fetch_relay_list(url, dest):
     """Fetch relay domains from url, write to dest (one domain per line).
 
-    Handles plain lists and markdown files with "- domain" bullet lines.
+    Parses chatmail.at/relays HTML: extracts text from <a class="hilite"> tags.
     """
+    import re
     import urllib.request
     with urllib.request.urlopen(url, timeout=30) as resp:
-        lines = resp.read().decode().splitlines()
-    domains = []
-    for line in lines:
-        line = line.strip().lstrip("-* ").strip()
-        if line and not line.startswith("#") and "." in line and " " not in line:
-            domains.append(line)
+        html = resp.read().decode()
+    domains = re.findall(r'class="hilite">([^<]+)', html)
     if not domains:
         raise SystemExit(f"No relay domains found at {url}")
     Path(dest).write_text("\n".join(domains) + "\n")
