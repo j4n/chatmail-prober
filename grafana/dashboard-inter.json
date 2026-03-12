@@ -743,7 +743,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "yellow",
@@ -821,7 +822,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "yellow",
@@ -1325,6 +1327,101 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "log": 10,
+              "type": "log"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 56
+      },
+      "id": 24,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "fdiuq9rm0h91ce"
+          },
+          "editorMode": "code",
+          "expr": "cmping_account_setup_seconds{probe_type=\"self\"}",
+          "instant": false,
+          "legendFormat": "{{source}} -> {{destination}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Account Setup Seconds (self)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "description": "Send error rate per source (sum over destinations). Green=no errors, yellow=rare, orange=frequent, red=high.",
       "fieldConfig": {
         "defaults": {
@@ -1368,10 +1465,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 20,
-        "w": 12,
+        "h": 11,
+        "w": 11,
         "x": 12,
-        "y": 56
+        "y": 64
       },
       "id": 19,
       "options": {
@@ -1479,8 +1576,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Chatmail Relay: Interoperability Cross-relay",
+  "title": "Relay Network: Interoperability Cross-relay",
   "uid": "chatmail-inter",
-  "version": 4,
+  "version": 5,
   "weekStart": ""
 }
