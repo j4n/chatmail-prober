@@ -414,7 +414,7 @@
             "properties": [
               {
                 "id": "custom.width",
-                "value": 257
+                "value": 200
               }
             ]
           },
@@ -426,42 +426,14 @@
             "properties": [
               {
                 "id": "custom.width",
-                "value": 178
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "OK"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 55
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "red",
-                      "value": null
-                    },
-                    {
-                      "color": "green",
-                      "value": 1
-                    }
-                  ]
-                }
+                "value": 155
               }
             ]
           },
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "^(Median|p90)"
+              "options": "^(p10|Median|p90)"
             },
             "properties": [
               {
@@ -474,7 +446,7 @@
               },
               {
                 "id": "custom.width",
-                "value": 80
+                "value": 72
               },
               {
                 "id": "thresholds",
@@ -509,8 +481,47 @@
             },
             "properties": [
               {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
                 "id": "custom.width",
-                "value": 97
+                "value": 72
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 0.05
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.2
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.5
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
               }
             ]
           }
@@ -560,6 +571,12 @@
           "format": "table",
           "instant": true,
           "refId": "C"
+        },
+        {
+          "expr": "cmping_rtt_p10_seconds{source=~\"$source\", destination=~\"$destination\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "D"
         }
       ],
       "title": "Probe Results",
@@ -579,19 +596,22 @@
               "__name__": true,
               "instance": true,
               "job": true,
-              "probe_type": true
+              "probe_type": true,
+              "Time 4": true
             },
             "indexByName": {
-              "Loss": 2,
-              "Median": 3,
+              "source": 0,
               "destination": 1,
+              "p10": 2,
+              "Median": 3,
               "p90": 4,
-              "source": 0
+              "Loss": 5
             },
             "renameByName": {
               "Value #A": "Loss",
               "Value #B": "Median",
-              "Value #C": "p90"
+              "Value #C": "p90",
+              "Value #D": "p10"
             }
           }
         },
@@ -624,6 +644,12 @@
               "source": {
                 "aggregations": [],
                 "operation": "groupby"
+              },
+              "p10": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
               }
             }
           }
@@ -634,7 +660,8 @@
             "renameByName": {
               "Loss (lastNotNull)": "Loss",
               "Median (lastNotNull)": "Median",
-              "p90 (lastNotNull)": "p90"
+              "p90 (lastNotNull)": "p90",
+              "p10 (lastNotNull)": "p10"
             }
           }
         }
@@ -1158,7 +1185,7 @@
       },
       "description": "Account setup time per (source, destination) pair. Green = fast, yellow = >2s, orange = >30s, red = >120s.",
       "gridPos": {
-        "h": 12,
+        "h": 20,
         "w": 12,
         "x": 0,
         "y": 56
@@ -1213,7 +1240,7 @@
       },
       "targets": [
         {
-          "expr": "cmping_account_setup_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"}",
+          "expr": "cmping_account_setup_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -1269,7 +1296,7 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 12,
+        "h": 20,
         "w": 12,
         "x": 12,
         "y": 56
@@ -1382,6 +1409,6 @@
   "timezone": "browser",
   "title": "Chatmail Relay Interop \u2014 Cross-relay",
   "uid": "chatmail-inter",
-  "version": 17,
+  "version": 18,
   "weekStart": ""
 }
