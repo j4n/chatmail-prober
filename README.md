@@ -138,7 +138,6 @@ sudo cp systemd/chatmail-prober.service \
        systemd/chatmail-prober-prom-copy.path \
        systemd/chatmail-prober-prom-copy.service \
        /etc/systemd/system/
-sudo cp relays.txt /var/lib/chatmail-prober/relays.txt
 sudo systemctl daemon-reload
 sudo systemctl enable --now chatmail-prober.service
 sudo systemctl enable --now chatmail-prober-prom-copy.path

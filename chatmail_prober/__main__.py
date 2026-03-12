@@ -28,22 +28,46 @@ from .prober import ProbeResult, run_probe
 
 log = logging.getLogger("chatmail_prober")
 
+AUTO_FETCH_URL = "https://github.com/chatmail/pages/blob/main/relays.markdown?plain=1"
+
 
 def _avg_ms(rtts_ms):
     return sum(rtts_ms) / len(rtts_ms) if rtts_ms else 0.0
 
 
-def read_relay_list(path):
-    """Read relay domains from a config file (one per line, # comments)."""
+def read_relay_list(paths):
+    """Read relay domains from one or more files (one per line, # comments)."""
+    seen = set()
     relays = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#"):
-                relays.append(line)
+    for path in paths:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and line not in seen:
+                    seen.add(line)
+                    relays.append(line)
     if not relays:
-        raise SystemExit(f"No relays found in {path}")
+        raise SystemExit(f"No relays found in {paths}")
     return relays
+
+
+def fetch_relay_list(url, dest):
+    """Fetch relay domains from url, write to dest (one domain per line).
+
+    Handles plain lists and markdown files with "- domain" bullet lines.
+    """
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        lines = resp.read().decode().splitlines()
+    domains = []
+    for line in lines:
+        line = line.strip().lstrip("-* ").strip()
+        if line and not line.startswith("#") and "." in line and " " not in line:
+            domains.append(line)
+    if not domains:
+        raise SystemExit(f"No relay domains found at {url}")
+    Path(dest).write_text("\n".join(domains) + "\n")
+    log.info("Fetched %d relays from %s -> %s", len(domains), url, dest)
 
 
 def parse_args(argv=None):
@@ -54,7 +78,8 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "relays",
-        help="path to relay list file (one domain per line)",
+        nargs="*",
+        help="relay list file(s) (one domain per line); at least one of this or --auto-fetch required",
     )
     parser.add_argument(
         "--port",
@@ -128,6 +153,12 @@ def parse_args(argv=None):
         type=int,
         default=10,
         help="number of fastest relays to highlight in --scan output (default: 10)",
+    )
+    parser.add_argument(
+        "--auto-fetch",
+        default=None,
+        metavar="PATH",
+        help=f"fetch relay list from {AUTO_FETCH_URL} and write to PATH before starting",
     )
     return parser.parse_args(argv)
 
@@ -324,7 +355,13 @@ def main(argv=None):
     except (ValueError, OSError):
         pass
 
-    relays = read_relay_list(args.relays)
+    relay_files = list(args.relays)
+    if args.auto_fetch:
+        fetch_relay_list(AUTO_FETCH_URL, args.auto_fetch)
+        relay_files.append(args.auto_fetch)
+    if not relay_files:
+        raise SystemExit("error: at least one relay list file or --auto-fetch is required")
+    relays = read_relay_list(relay_files)
     log.info("Loaded %d relays: %s", len(relays), ", ".join(relays))
 
     cache_dir = Path(args.cache_dir).expanduser()

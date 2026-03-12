@@ -8,7 +8,6 @@ Type=simple
 User=chatmail-prober
 Group=chatmail-prober
 # systemd creates /var/lib/chatmail-prober owned by User= on first start.
-# Place relays.txt there before enabling the service.
 StateDirectory=chatmail-prober
 # uv is installed under the service user's home at /opt/chatmail-prober.
 Environment=PATH=/opt/chatmail-prober/.local/bin:/usr/local/bin:/usr/bin:/bin
@@ -18,7 +17,7 @@ WorkingDirectory=/opt/chatmail-prober/chatmail-prober
 # Writes metrics atomically to /var/tmp/; the chatmail-prober-prom-copy.path
 # unit copies the file into node-exporter's textfile directory on each write.
 ExecStart=uv run chatmail-prober \
-    /var/lib/chatmail-prober/relays.txt \
+    --auto-fetch /var/lib/chatmail-prober/relays.txt \
     --textfile /var/tmp/chatmail-prober.prom \
     --workers 30 \
     --cache-dir /var/lib/chatmail-prober \

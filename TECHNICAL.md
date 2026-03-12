@@ -638,12 +638,13 @@ Thresholds: green <1s, blue <3s, yellow <5s, orange <10s, red >=10s.
 ## 11. Configuration Reference
 
 ```
-chatmail-prober <relays_file> [options]
+chatmail-prober [relays_file ...] [options]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `relays` | (required) | Path to relay list file (one domain/line, # comments) |
+| `relays` | (optional) | One or more relay list files; merged and deduplicated |
+| `--auto-fetch PATH` | `None` | Fetch relay list from upstream URL, write to PATH, add to sources |
 | `--port` | `0` | HTTP /metrics listen port (0 = disabled) |
 | `--textfile` | `None` | Path for node_exporter textfile .prom output |
 | `--interval` | `900` | Seconds between probe rounds |
@@ -657,6 +658,10 @@ chatmail-prober <relays_file> [options]
 | `--top N` | `10` | Relays to highlight in --scan output |
 | `-v` / `-vv` / `-vvv` | 0 | Verbosity: debug / cmping errors / cmping events |
 | `-q` | false | Quiet: suppress progress, show only warnings/errors |
+
+At least one of `relays` or `--auto-fetch` must be provided.  When both are
+given, domains from all sources are merged and deduplicated.  The default
+fetch URL is `https://github.com/chatmail/pages/blob/main/relays.markdown?plain=1`.
 
 ### Relay list format
 
@@ -819,7 +824,7 @@ sudo useradd -r -s /usr/sbin/nologin -d /opt/chatmail-prober chatmail-prober
 |---|---|
 | `/opt/chatmail-prober/` | Home dir for the service user; uv installs to `.local/bin/uv` here |
 | `/opt/chatmail-prober/chatmail-prober/` | Git repo (`WorkingDirectory`) |
-| `/var/lib/chatmail-prober/relays.txt` | Relay list -- place here before first start |
+| `/var/lib/chatmail-prober/relays.txt` | Relay list cache written by `--auto-fetch` on each startup |
 | `/var/lib/chatmail-prober/` | Per-worker account cache and state (created by `StateDirectory=`) |
 | `/var/tmp/chatmail-prober.prom` | Textfile written atomically by the prober |
 | `/var/lib/prometheus/node-exporter/chatmail-prober.prom` | Destination for node-exporter |
@@ -831,7 +836,6 @@ sudo cp systemd/chatmail-prober.service \
        systemd/chatmail-prober-prom-copy.path \
        systemd/chatmail-prober-prom-copy.service \
        /etc/systemd/system/
-sudo cp relays.txt /var/lib/chatmail-prober/relays.txt
 sudo systemctl daemon-reload
 sudo systemctl enable --now chatmail-prober.service
 sudo systemctl enable --now chatmail-prober-prom-copy.path

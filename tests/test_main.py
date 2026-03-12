@@ -18,38 +18,43 @@ class TestReadRelayList:
     def test_reads_domains(self, tmp_path):
         f = tmp_path / "relays.txt"
         f.write_text("nine.testrun.org\nmehl.cloud\ntarpit.fun\n")
-        assert read_relay_list(str(f)) == ["nine.testrun.org", "mehl.cloud", "tarpit.fun"]
+        assert read_relay_list([str(f)]) == ["nine.testrun.org", "mehl.cloud", "tarpit.fun"]
 
     def test_ignores_comments_and_blanks(self, tmp_path):
         f = tmp_path / "relays.txt"
         f.write_text("# comment\nnine.testrun.org\n\n  \n# another\nmehl.cloud\n")
-        assert read_relay_list(str(f)) == ["nine.testrun.org", "mehl.cloud"]
+        assert read_relay_list([str(f)]) == ["nine.testrun.org", "mehl.cloud"]
 
     def test_strips_whitespace(self, tmp_path):
         f = tmp_path / "relays.txt"
         f.write_text("  nine.testrun.org  \n  mehl.cloud\t\n")
-        assert read_relay_list(str(f)) == ["nine.testrun.org", "mehl.cloud"]
+        assert read_relay_list([str(f)]) == ["nine.testrun.org", "mehl.cloud"]
 
     def test_empty_file_exits(self, tmp_path):
         f = tmp_path / "relays.txt"
         f.write_text("# only comments\n\n")
         with pytest.raises(SystemExit):
-            read_relay_list(str(f))
+            read_relay_list([str(f)])
 
     def test_single_relay(self, tmp_path):
         f = tmp_path / "relays.txt"
         f.write_text("nine.testrun.org\n")
-        assert read_relay_list(str(f)) == ["nine.testrun.org"]
+        assert read_relay_list([str(f)]) == ["nine.testrun.org"]
+
+    def test_multiple_files_merged_and_deduplicated(self, tmp_path):
+        f1 = tmp_path / "a.txt"
+        f1.write_text("nine.testrun.org\nmehl.cloud\n")
+        f2 = tmp_path / "b.txt"
+        f2.write_text("mehl.cloud\ntarpit.fun\n")
+        assert read_relay_list([str(f1), str(f2)]) == [
+            "nine.testrun.org", "mehl.cloud", "tarpit.fun"
+        ]
 
 
 class TestParseArgs:
-    def test_required_relays(self):
-        with pytest.raises(SystemExit):
-            parse_args([])
-
     def test_defaults(self):
         args = parse_args(["relays.txt"])
-        assert args.relays == "relays.txt"
+        assert args.relays == ["relays.txt"]
         assert args.port == 0
         assert args.textfile is None
         assert args.interval == 900
