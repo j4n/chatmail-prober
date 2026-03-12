@@ -1,8 +1,8 @@
 [submodule "cmping-src"]
 	path = cmping-src
-	url = git@github.com:chatmail/cmping.git
+	url = https://github.com/chatmail/cmping.git
 	branch = make-importable
 [submodule "esnet-matrix-panel"]
 	path = esnet-matrix-panel
-	url = git@github.com:j4n/esnet-matrix-panel.git
+	url = https://github.com/j4n/esnet-matrix-panel.git
 	branch = responsive-extralabels
