@@ -1,0 +1,38 @@
+[Unit]
+Description=chatmail-prober relay smoke-test exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chatmail-prober
+Group=chatmail-prober
+# systemd creates /var/lib/chatmail-prober owned by User= on first start.
+# Place relays.txt there before enabling the service.
+StateDirectory=chatmail-prober
+# uv is installed under the service user's home at /opt/chatmail-prober.
+Environment=PATH=/opt/chatmail-prober/.local/bin:/usr/local/bin:/usr/bin:/bin
+# The repo lives as a child of the user's home directory.
+WorkingDirectory=/opt/chatmail-prober/chatmail-prober
+
+# Writes metrics atomically to /var/tmp/; the chatmail-prober-prom-copy.path
+# unit copies the file into node-exporter's textfile directory on each write.
+ExecStart=uv run chatmail-prober \
+    /var/lib/chatmail-prober/relays.txt \
+    --textfile /var/tmp/chatmail-prober.prom \
+    --workers 30 \
+    --cache-dir /var/lib/chatmail-prober \
+    -q
+
+# SIGUSR1 lets the current probe round finish before exiting cleanly.
+# Restart=always then brings up a fresh process.
+# Use "systemctl reload chatmail-prober" for a graceful restart.
+ExecReload=kill -s USR1 $MAINPID
+Restart=always
+RestartSec=30
+# Raise the fd limit; the prober also does this at runtime but systemd's
+# default (1024) can be lower than the kernel hard limit.
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

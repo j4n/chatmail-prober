@@ -1,0 +1,7 @@
+[Unit]
+Description=Copy chatmail-prober metrics to node-exporter textfile directory
+
+[Service]
+Type=oneshot
+ExecStart=cp /var/tmp/chatmail-prober.prom \
+    /var/lib/prometheus/node-exporter/chatmail-prober.prom

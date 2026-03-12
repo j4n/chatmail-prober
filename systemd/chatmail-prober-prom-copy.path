@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for chatmail-prober metrics file updates
+
+[Path]
+PathModified=/var/tmp/chatmail-prober.prom
+Unit=chatmail-prober-prom-copy.service
+
+[Install]
+WantedBy=multi-user.target
