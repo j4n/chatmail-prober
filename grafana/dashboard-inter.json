@@ -920,6 +920,14 @@
                   "mode": "fixed",
                   "fixedColor": "#cccccc"
                 }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": false
+                }
               }
             ]
           },
@@ -938,6 +946,14 @@
                 "value": {
                   "mode": "fixed",
                   "fixedColor": "#cccccc"
+                }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": false
                 }
               }
             ]
@@ -1060,6 +1076,14 @@
                   "mode": "fixed",
                   "fixedColor": "#cccccc"
                 }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": false
+                }
               }
             ]
           },
@@ -1078,6 +1102,14 @@
                 "value": {
                   "mode": "fixed",
                   "fixedColor": "#cccccc"
+                }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": false
                 }
               }
             ]
@@ -1501,6 +1533,6 @@
   "timezone": "browser",
   "title": "Chatmail Relay Interop \u2014 Cross-relay",
   "uid": "chatmail-inter",
-  "version": 15,
+  "version": 16,
   "weekStart": ""
 }
