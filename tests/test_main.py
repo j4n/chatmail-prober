@@ -55,7 +55,7 @@ class TestParseArgs:
         assert args.interval == 900
         assert args.count == 5
         assert args.ping_interval == 0.1
-        assert args.timeout == 45
+        assert args.timeout == 60
         assert args.workers == 5
         assert args.once is False
         assert args.verbose == 0
