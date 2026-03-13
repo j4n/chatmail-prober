@@ -4,9 +4,7 @@ Smokeping-style Prometheus exporter for chatmail relay interoperability.
 Probes all pairs of configured chatmail relays via Delta Chat message
 round-trips and exports RTT histograms, loss ratios, and timing metrics.
 
-**Viewing diagrams**: GitHub renders Mermaid natively in `.md` files.
-Locally: VS Code + [bierner.markdown-mermaid](https://marketplace.visualstudio.com/items?itemName=bierner.markdown-mermaid)
-extension (open Markdown Preview), or paste any block into [mermaid.live](https://mermaid.live).
+**Viewing this with rendered diagrams**: Either through GitHub or, for example, https://www.mermditor.dev/editor
 
 ---
 
@@ -100,13 +98,11 @@ chatmail-prober/
 │   ├── test_thread_leak.py  # Thread cleanup tests (no mocking, real threads)
 │   └── test_live.py         # Live integration tests (CMPING_LIVE_TEST=...)
 ├── grafana/
-│   ├── dashboard-intra.json # Self-probe overview
 │   ├── dashboard-inter.json # Cross-relay RTT matrix
 │   ├── dashboard-single.json# Single-relay smokeping view
 │   └── smokeping_panel.py   # Panel JSON generator
 ├── pyproject.toml           # Project metadata (uv/hatchling)
 ├── Makefile                 # install / install-dev / test / clean
-└── relay_speedtest.txt      # Known public relay domain list
 ```
 
 ---
@@ -308,42 +304,6 @@ graph TD
 | `events_thread` | `Rpc.start()` | Until `Rpc.close()` | `Rpc.close()` joins it |
 | `reader_thread` | `Rpc.start()` | Until stdout closed | `Rpc.close()` joins it |
 | `writer_thread` | `Rpc.start()` | Until stdin closed | `Rpc.close()` joins it |
-
-### The receiver_thread memory leak (fixed)
-
-Before the fix, `receiver_thread` called `receiver.wait_for_event()` which
-internally calls `queue.Queue.get()` with no timeout:
-
-```
-receiver_thread --> account.wait_for_event() --> rpc.wait_for_event(id)
-                                              --> Queue.get()  # blocks forever
-```
-
-After `Rpc.close()`, the events_loop stopped but nothing put a sentinel in
-the account queues.  The threads stayed blocked, accumulated across N^2 pairs
-and multiple rounds, grew `threading._dangling`, and eventually caused
-`MemoryError` when `subprocess.Popen` tried to fork.
-
-The fix (`cmping.py:Pinger.receive()`):
-
-```python
-# Before: blocking forever
-event = receiver.wait_for_event()
-
-# After: timeout-based poll with cooperative stop
-account_queue = receiver._rpc.get_queue(receiver.id)
-while not stop_event.is_set():
-    try:
-        item = account_queue.get(timeout=1.0)
-        ...
-    except queue.Empty:
-        continue   # re-checks stop_event at loop top
-
-# In finally:
-stop_event.set()
-for t in threads:
-    t.join(timeout=2.0)  # now actually joins within ~1s
-```
 
 ---
 
@@ -622,13 +582,13 @@ Smokeping-style gray band + colored median line.
 
 ```promql
 # Median (solid line, color = threshold)
-cmping_rtt_median_seconds{probe_type="cross", source="$relay"} * 1000
+cmping_rtt_median_seconds{probe_type="cross", source="$relay"}
 
 # p90 (upper band edge, hidden)
-cmping_rtt_p90_seconds{...} * 1000
+cmping_rtt_p90_seconds{...}
 
 # p10 (lower band edge, hidden)
-cmping_rtt_p10_seconds{...} * 1000
+cmping_rtt_p10_seconds{...}
 ```
 
 Thresholds: green <1s, blue <3s, yellow <5s, orange <10s, red >=10s.
@@ -741,6 +701,25 @@ chatmail-prober relays.txt --once -vvv 2>&1 | head -200
 
 ## 13. Known Failure Modes
 
+### Probe round exceeds interval
+
+**Symptom**: Log line `"Probe round took Xs, exceeds interval Ys -- starting next immediately"`.
+
+**Cause**: N^2 pairs with high --timeout, slow relays, or too few workers.
+
+**Tuning**: Reduce `--timeout`, increase `--workers`, or reduce N (fewer relays).
+The round time is roughly `ceil(N^2 / workers) * avg_probe_time`.
+
+### Dead relay contaminates metrics
+
+**Symptom**: A relay is down but metrics still show last round's values.
+
+**Handling**: The pre-flight `check_relays_alive()` runs a count=1 self-probe
+on every relay and excludes dead ones from the matrix for that round.
+Dead relays appear in `cmping_send_errors_total` and `cmping_probe_success=0`.
+
+#### Fixed
+
 ### MemoryError / "can't start new thread"
 
 **Symptom**: `MemoryError` in `threading._after_fork`, followed by
@@ -769,7 +748,7 @@ for lock in cache_dir.rglob("accounts.lock"):
     lock.unlink(missing_ok=True)
 ```
 
-### File descriptor exhaustion
+### File descriptor exhaustion (fixed)
 
 **Symptom**: `OSError: [Errno 24] Too many open files` from deltachat or IMAP.
 
@@ -779,23 +758,6 @@ resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
 ```
 
 Systemd units may also need `LimitNOFILE=65536` in the `[Service]` section.
-
-### Probe round exceeds interval
-
-**Symptom**: Log line `"Probe round took Xs, exceeds interval Ys -- starting next immediately"`.
-
-**Cause**: N^2 pairs with high --timeout, slow relays, or too few workers.
-
-**Tuning**: Reduce `--timeout`, increase `--workers`, or reduce N (fewer relays).
-The round time is roughly `ceil(N^2 / workers) * avg_probe_time`.
-
-### Dead relay contaminates metrics
-
-**Symptom**: A relay is down but metrics still show last round's values.
-
-**Handling**: The pre-flight `check_relays_alive()` runs a count=1 self-probe
-on every relay and excludes dead ones from the matrix for that round.
-Dead relays appear in `cmping_send_errors_total` and `cmping_probe_success=0`.
 
 ---
 
