@@ -1,7 +1,7 @@
 """Reusable smokeping-style panel generator for Grafana dashboards.
 
 Generates a timeseries panel with a gray p10-p90 band and a
-threshold-colored median line (green=fast, through red=slow),
+threshold-colored median line (dark-green=fast, through dark-red=timeout),
 matching the classic smokeping aesthetic.
 
 Usage:
@@ -56,11 +56,12 @@ def smokeping_panel(
                 "thresholds": {
                     "mode": "absolute",
                     "steps": [
-                        {"color": "green", "value": None},
-                        {"color": "blue", "value": 1},
-                        {"color": "yellow", "value": 3},
-                        {"color": "orange", "value": 5},
-                        {"color": "red", "value": 10},
+                        {"color": "dark-green", "value": None},
+                        {"color": "green", "value": 2},
+                        {"color": "light-green", "value": 6},
+                        {"color": "yellow", "value": 24},
+                        {"color": "red", "value": 48},
+                        {"color": "dark-red", "value": 60},
                     ],
                 },
             },
@@ -92,11 +93,12 @@ def smokeping_panel(
                             "value": {
                                 "mode": "absolute",
                                 "steps": [
-                                    {"color": "green", "value": None},
-                                    {"color": "blue", "value": 1},
-                                    {"color": "yellow", "value": 3},
-                                    {"color": "orange", "value": 5},
-                                    {"color": "red", "value": 10},
+                                    {"color": "dark-green", "value": None},
+                                    {"color": "green", "value": 2},
+                                    {"color": "light-green", "value": 6},
+                                    {"color": "yellow", "value": 24},
+                                    {"color": "red", "value": 48},
+                                    {"color": "dark-red", "value": 60},
                                 ],
                             },
                         },

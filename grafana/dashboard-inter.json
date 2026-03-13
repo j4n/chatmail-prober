@@ -34,16 +34,28 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "dark-green",
                 "value": null
               },
               {
+                "color": "green",
+                "value": 2
+              },
+              {
+                "color": "light-green",
+                "value": 6
+              },
+              {
                 "color": "yellow",
-                "value": 5
+                "value": 24
               },
               {
                 "color": "red",
-                "value": 30
+                "value": 48
+              },
+              {
+                "color": "dark-red",
+                "value": 60
               }
             ]
           },
@@ -280,7 +292,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Median RTT per (source, destination) pair. Green = fast, yellow = >2s, red = >10s. Failed pairs show no data (red null color).",
+      "description": "Median RTT per (source, destination) pair. Green = fast, yellow = >24s, red = >48s. Failed pairs show no data (red null color).",
       "fieldConfig": {
         "defaults": {
           "mappings": [],
@@ -288,16 +300,28 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "dark-green",
                 "value": null
               },
               {
-                "color": "yellow",
+                "color": "green",
                 "value": 2
               },
               {
-                "color": "orange",
-                "value": 10
+                "color": "light-green",
+                "value": 6
+              },
+              {
+                "color": "yellow",
+                "value": 24
+              },
+              {
+                "color": "red",
+                "value": 48
+              },
+              {
+                "color": "dark-red",
+                "value": 60
               }
             ]
           },
@@ -454,20 +478,28 @@
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "green",
+                      "color": "dark-green",
                       "value": null
                     },
                     {
-                      "color": "yellow",
-                      "value": 5
+                      "color": "green",
+                      "value": 2
                     },
                     {
-                      "color": "orange",
-                      "value": 10
+                      "color": "light-green",
+                      "value": 6
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 24
                     },
                     {
                       "color": "red",
-                      "value": 15
+                      "value": 48
+                    },
+                    {
+                      "color": "dark-red",
+                      "value": 60
                     }
                   ]
                 }
@@ -503,15 +535,11 @@
                     },
                     {
                       "color": "yellow",
-                      "value": 0.05
-                    },
-                    {
-                      "color": "orange",
-                      "value": 0.2
+                      "value": 0.1
                     },
                     {
                       "color": "red",
-                      "value": 0.5
+                      "value": 0.2
                     }
                   ]
                 }
@@ -721,7 +749,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Average outbound loss per source host (avg over all destinations). Yellow=any loss, orange=>40%, red=>80%.",
+      "description": "Average outbound loss per source host (avg over all destinations). Green=no loss, yellow=>10%, red=>20%.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -748,15 +776,11 @@
               },
               {
                 "color": "yellow",
-                "value": 0.05
-              },
-              {
-                "color": "orange",
-                "value": 0.2
+                "value": 0.1
               },
               {
                 "color": "red",
-                "value": 0.5
+                "value": 0.2
               }
             ]
           }
@@ -800,7 +824,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Average inbound loss per destination host (avg over all sources). Yellow=any loss, orange=>40%, red=>80%.",
+      "description": "Average inbound loss per destination host (avg over all sources). Green=no loss, yellow=>10%, red=>20%.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -827,15 +851,11 @@
               },
               {
                 "color": "yellow",
-                "value": 0.05
-              },
-              {
-                "color": "orange",
-                "value": 0.2
+                "value": 0.1
               },
               {
                 "color": "red",
-                "value": 0.5
+                "value": 0.2
               }
             ]
           }
@@ -935,23 +955,27 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "dark-green"
               },
               {
-                "color": "blue",
-                "value": 1
+                "color": "green",
+                "value": 2
+              },
+              {
+                "color": "light-green",
+                "value": 6
               },
               {
                 "color": "yellow",
-                "value": 3
-              },
-              {
-                "color": "orange",
-                "value": 5
+                "value": 24
               },
               {
                 "color": "red",
-                "value": 10
+                "value": 48
+              },
+              {
+                "color": "dark-red",
+                "value": 60
               }
             ]
           },
@@ -1111,23 +1135,27 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "dark-green"
               },
               {
-                "color": "blue",
-                "value": 1
+                "color": "green",
+                "value": 2
+              },
+              {
+                "color": "light-green",
+                "value": 6
               },
               {
                 "color": "yellow",
-                "value": 3
-              },
-              {
-                "color": "orange",
-                "value": 5
+                "value": 24
               },
               {
                 "color": "red",
-                "value": 10
+                "value": 48
+              },
+              {
+                "color": "dark-red",
+                "value": 60
               }
             ]
           },
@@ -1256,7 +1284,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Account setup time per (source, destination) pair. Green = fast, yellow = >2s, orange = >30s, red = >120s.",
+      "description": "Account setup time per (source, destination) pair. Dark-green = fast (<2s), green = <6s, light-green = <24s, yellow = <48s, red = <60s, dark-red = timeout.",
       "fieldConfig": {
         "defaults": {
           "mappings": [],
@@ -1264,19 +1292,27 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "dark-green"
               },
               {
-                "color": "yellow",
+                "color": "green",
                 "value": 2
               },
               {
-                "color": "orange",
-                "value": 30
+                "color": "light-green",
+                "value": 6
+              },
+              {
+                "color": "yellow",
+                "value": 24
               },
               {
                 "color": "red",
-                "value": 120
+                "value": 48
+              },
+              {
+                "color": "dark-red",
+                "value": 60
               }
             ]
           },

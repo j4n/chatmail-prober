@@ -175,7 +175,7 @@ Three dashboards are included in `grafana/`:
 
 Import via Grafana UI (Dashboards > Import > Upload JSON) or provision them.
 
-The smokeping panels show a median RTT line with a gray p10-p90 band. The median line color follows RTT thresholds: green < 1s, blue < 3s, yellow < 5s, orange < 10s, red >= 10s.
+The smokeping panels show a median RTT line with a gray p10-p90 band. The median line color follows RTT thresholds: dark-green < 2s, green < 6s, light-green < 24s, yellow < 48s, red < 60s, dark-red >= 60s.
 
 ### Smokeping panel generator
 
