@@ -173,7 +173,6 @@ sudo systemctl reload chatmail-prober
 
 Three dashboards are included in `grafana/`:
 
-- **dashboard-intra.json** -- Self-probe overview: per-relay health, state timeline, median/p90/stddev RTT panels
 - **dashboard-inter.json** -- Cross-relay overview: pair matrix, probe results table, per-pair RTT panels
 - **dashboard-single.json** -- Single relay focus: self-probe smokeping plot, peer connectivity timelines, per-peer smokeping detail
 
