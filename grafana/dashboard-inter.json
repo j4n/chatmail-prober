@@ -359,7 +359,7 @@
         "inputList": false,
         "legendType": "range",
         "nullColor": "#d44a3a",
-        "showLegend": false,
+        "showLegend": true,
         "sourceField": "destination",
         "sourceText": "From",
         "targetField": "source",
@@ -799,7 +799,7 @@
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": false
+          "showLegend": true
         },
         "mergeValues": true,
         "rowHeight": 0.9,
@@ -874,7 +874,7 @@
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": false
+          "showLegend": true
         },
         "mergeValues": true,
         "rowHeight": 0.9,
@@ -1337,7 +1337,7 @@
         "inputList": false,
         "legendType": "range",
         "nullColor": "#d44a3a",
-        "showLegend": false,
+        "showLegend": true,
         "sourceField": "destination",
         "sourceText": "From",
         "targetField": "source",
@@ -1512,7 +1512,7 @@
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": false
+          "showLegend": true
         },
         "mergeValues": true,
         "rowHeight": 0.9,
