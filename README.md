@@ -79,8 +79,8 @@ A SIGUSR1 signal (`kill -USR1`) stops the service after finishing the current pr
 | `cmping_probe_success`         | Gauge   | 1 if last round had zero loss, 0 otherwise          |
 | `cmping_probe_loss_ratio`      | Gauge   | Fraction of pings lost (0.0 = none, 1.0 = all)      |
 | `cmping_rtt_median_seconds`    | Gauge   | Median round-trip time                              |
-| `cmping_rtt_p90_seconds`       | Gauge   | 90th-percentile round-trip time                     |
-| `cmping_rtt_p10_seconds`       | Gauge   | 10th-percentile round-trip time                     |
+| `cmping_rtt_p90_seconds`       | Gauge   | 90th-percentile round-trip time (slowest)           |
+| `cmping_rtt_p10_seconds`       | Gauge   | 10th-percentile round-trip time (fastest)           |
 | `cmping_rtt_stddev_seconds`    | Gauge   | Standard deviation of round-trip times              |
 | `cmping_send_errors_total`     | Counter | Failed probe rounds (timeout, crash, setup failure) |
 | `cmping_account_setup_seconds` | Gauge   | Time spent on account setup                         |
