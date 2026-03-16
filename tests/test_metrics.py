@@ -56,8 +56,9 @@ class TestUpdateMetricsSuccess:
 
         lbl = _labels()
         assert metrics_mod.rtt_median.labels(**lbl)._value.get() == pytest.approx(0.5)
-        assert metrics_mod.rtt_p90.labels(**lbl)._value.get() == pytest.approx(1.5)
-        assert metrics_mod.rtt_p10.labels(**lbl)._value.get() == pytest.approx(0.25)
+        # statistics.quantiles(method="inclusive") interpolates within data range
+        assert metrics_mod.rtt_p90.labels(**lbl)._value.get() == pytest.approx(1.3)
+        assert metrics_mod.rtt_p10.labels(**lbl)._value.get() == pytest.approx(0.3)
         assert metrics_mod.rtt_stddev.labels(**lbl)._value.get() == pytest.approx(0.6614, abs=0.001)
 
     def test_probe_success_set_to_one_on_zero_loss(self):

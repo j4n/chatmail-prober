@@ -107,13 +107,15 @@ def update_metrics(result):
     if result.rtts_ms:
         rtt_s = [r / 1000.0 for r in result.rtts_ms]
         rtt_median.labels(**labels).set(statistics.median(rtt_s))
-        sorted_rtt = sorted(rtt_s)
-        rtt_p90.labels(**labels).set(
-            sorted_rtt[min(int(len(sorted_rtt) * 0.9), len(sorted_rtt) - 1)]
-        )
-        rtt_p10.labels(**labels).set(
-            sorted_rtt[max(int(len(sorted_rtt) * 0.1), 0)]
-        )
-        rtt_stddev.labels(**labels).set(
-            statistics.stdev(rtt_s) if len(rtt_s) >= 2 else 0.0
-        )
+        if len(rtt_s) >= 2:
+            # quantiles(n=10, method="inclusive") returns 9 cut points;
+            # index 0 = p10, index 8 = p90.  "inclusive" interpolates within
+            # the data range (exclusive can extrapolate beyond min/max).
+            deciles = statistics.quantiles(rtt_s, n=10, method="inclusive")
+            rtt_p10.labels(**labels).set(deciles[0])
+            rtt_p90.labels(**labels).set(deciles[-1])
+            rtt_stddev.labels(**labels).set(statistics.stdev(rtt_s))
+        else:
+            rtt_p10.labels(**labels).set(rtt_s[0])
+            rtt_p90.labels(**labels).set(rtt_s[0])
+            rtt_stddev.labels(**labels).set(0.0)
