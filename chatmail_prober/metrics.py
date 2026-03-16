@@ -121,9 +121,15 @@ def update_metrics(result):
         account_setup_seconds.labels(**labels).set(float("nan"))
         return
 
-    probe_success.labels(**labels).set(1 if result.loss == 0 else 0)
+    # Derive both success and loss from sent/received (single source of truth)
+    # rather than mixing result.loss (from cmping) with our own computation.
     if result.sent > 0:
-        probe_loss_ratio.labels(**labels).set(1.0 - result.received / result.sent)
+        loss_ratio = 1.0 - result.received / result.sent
+        probe_success.labels(**labels).set(1 if loss_ratio == 0.0 else 0)
+        probe_loss_ratio.labels(**labels).set(loss_ratio)
+    else:
+        probe_success.labels(**labels).set(0)
+        probe_loss_ratio.labels(**labels).set(1.0)
     account_setup_seconds.labels(**labels).set(result.account_setup_time)
 
     if result.rtts_ms:
