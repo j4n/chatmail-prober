@@ -73,6 +73,8 @@ where you only want errors.
 
 A SIGUSR1 signal (`kill -USR1`) stops the service after finishing the current probing round.
 
+A SIGUSR2 signal (`kill -USR2`) cycles verbosity: quiet -> normal -> -v -> -vv -> quiet.
+
 ## Metrics
 
 | Metric                         | Type    | Description                                         |

@@ -478,6 +478,37 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGUSR1, _handle_usr1)
 
+    # Verbosity cycle: quiet -> normal -> -v -> -vv -> quiet ...
+    _verbosity_levels = [
+        # (log_level, restore_print, args_verbose, label)
+        (logging.WARNING, False, 0, "quiet"),
+        (logging.INFO,    False, 0, "normal"),
+        (logging.DEBUG,   False, 1, "-v (debug)"),
+        (logging.DEBUG,   True,  2, "-vv (debug + cmping)"),
+    ]
+
+    # Determine starting position in the cycle from startup flags.
+    if args.quiet:
+        _verbosity_idx = 0
+    elif args.verbose >= 2:
+        _verbosity_idx = 3
+    elif args.verbose >= 1:
+        _verbosity_idx = 2
+    else:
+        _verbosity_idx = 1
+
+    def _handle_usr2(signum, frame):
+        nonlocal _verbosity_idx
+        _verbosity_idx = (_verbosity_idx + 1) % len(_verbosity_levels)
+        level, restore_print, verbose, label = _verbosity_levels[_verbosity_idx]
+        log.setLevel(level)
+        args.verbose = verbose
+        builtins.print = _print if restore_print else lambda *a, **kw: None
+        # Log at WARNING so it's visible regardless of current level.
+        log.warning("SIGUSR2: verbosity -> %s", label)
+
+    signal.signal(signal.SIGUSR2, _handle_usr2)
+
     relays = check_relays_alive(relays, args)
     if not relays:
         raise SystemExit("No reachable relays -- aborting")

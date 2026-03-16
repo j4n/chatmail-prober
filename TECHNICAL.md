@@ -477,6 +477,9 @@ stateDiagram-v2
 The 5-second timer in the signal handler fires `os._exit(0)` as a backstop if
 the main thread stays stuck in `as_completed()` after all futures are cancelled.
 
+SIGUSR2 cycles through verbosity levels at runtime without restarting:
+quiet (WARNING only) -> normal (INFO) -> -v (DEBUG) -> -vv (DEBUG + cmping output).
+
 ---
 
 ## 9. cmping Library Internals
