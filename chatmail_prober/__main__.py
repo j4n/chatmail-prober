@@ -54,6 +54,27 @@ def read_relay_list(paths):
     return relays
 
 
+def read_exclude_list(path):
+    """Read pair exclusions from a file.
+
+    Format: one "source->destination" per line.  # comments and blank lines
+    are ignored.  Returns a set of (source, destination) tuples.
+    """
+    excludes = set()
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "->" not in line:
+                log.warning("Ignoring malformed exclude line: %s", line)
+                continue
+            src, dst = line.split("->", 1)
+            excludes.add((src.strip(), dst.strip()))
+    log.info("Loaded %d pair exclusion(s) from %s", len(excludes), path)
+    return excludes
+
+
 def fetch_relay_list(url, dest):
     """Fetch relay domains from url, write to dest (one domain per line).
 
@@ -159,6 +180,12 @@ def parse_args(argv=None):
         default=None,
         metavar="PATH",
         help=f"fetch relay list from {AUTO_FETCH_URL} and write to PATH before starting",
+    )
+    parser.add_argument(
+        "--exclude",
+        default=None,
+        metavar="PATH",
+        help='file of pairs to skip, one per line: "src->dst" (# comments allowed)',
     )
     return parser.parse_args(argv)
 
@@ -284,7 +311,8 @@ def check_relays_alive(relays, args):
     return alive
 
 
-def run_round(relays, args, executors, shutdown_event=None, textfile=None):
+def run_round(relays, args, executors, shutdown_event=None, textfile=None,
+              exclude=None):
     """Run one complete probe round across all relay pairs.
 
     Pairs are distributed round-robin across the per-worker executors so each
@@ -296,7 +324,8 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None):
     errors from killed rpc-server processes).
     """
     clear_stale_labels(relays)
-    pairs = [(s, d) for s in relays for d in relays]
+    pairs = [(s, d) for s in relays for d in relays
+             if not exclude or (s, d) not in exclude]
     log.info("Starting probe round: %d pairs, %d workers", len(pairs), args.workers)
     round_start = time.time()
 
@@ -393,6 +422,10 @@ def main(argv=None):
     relays = read_relay_list(relay_files)
     log.info("Loaded %d relays: %s", len(relays), ", ".join(relays))
 
+    exclude = set()
+    if args.exclude:
+        exclude = read_exclude_list(args.exclude)
+
     cache_dir = Path(args.cache_dir).expanduser()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -400,9 +433,10 @@ def main(argv=None):
         scan_relays(relays, args)
         return
 
+    total_pairs = len(relays) ** 2 - len(exclude)
     log.info(
         "Pairs: %d, count: %d, interval: %ds, workers: %d",
-        len(relays) ** 2, args.count, args.interval, args.workers,
+        total_pairs, args.count, args.interval, args.workers,
     )
 
     # Clean up orphaned RPC servers and stale locks from previous crashes.
@@ -458,7 +492,7 @@ def main(argv=None):
     try:
         while not shutdown_event.is_set():
             elapsed = run_round(relays, args, executors, shutdown_event,
-                                textfile=args.textfile)
+                                textfile=args.textfile, exclude=exclude)
 
             if args.textfile:
                 write_textfile(args.textfile)

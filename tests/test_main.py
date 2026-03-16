@@ -9,7 +9,9 @@ import pytest
 from concurrent.futures import ThreadPoolExecutor
 from prometheus_client import CollectorRegistry
 
-from chatmail_prober.__main__ import read_relay_list, parse_args, run_round, check_relays_alive
+from chatmail_prober.__main__ import (
+    read_relay_list, read_exclude_list, parse_args, run_round, check_relays_alive,
+)
 from chatmail_prober.prober import ProbeResult
 from chatmail_prober import metrics as metrics_mod
 
@@ -259,3 +261,47 @@ class TestCheckRelaysAlive:
         alive = check_relays_alive(relays, args)
 
         assert alive == relays
+
+
+class TestReadExcludeList:
+    def test_parses_pairs(self, tmp_path):
+        f = tmp_path / "exclude.txt"
+        f.write_text("a.example -> b.example\nc.example->d.example\n")
+        result = read_exclude_list(str(f))
+        assert result == {("a.example", "b.example"), ("c.example", "d.example")}
+
+    def test_ignores_comments_and_blanks(self, tmp_path):
+        f = tmp_path / "exclude.txt"
+        f.write_text("# a comment\n\na.example -> b.example\n  \n")
+        result = read_exclude_list(str(f))
+        assert result == {("a.example", "b.example")}
+
+    def test_skips_malformed_lines(self, tmp_path):
+        f = tmp_path / "exclude.txt"
+        f.write_text("a.example -> b.example\nno_arrow_here\n")
+        result = read_exclude_list(str(f))
+        assert result == {("a.example", "b.example")}
+
+
+class TestRunRoundExclude:
+    def test_excludes_pairs(self, tmp_path, monkeypatch, _fresh_metrics):
+        probed_pairs = []
+
+        def _tracking_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0):
+            probed_pairs.append((source, dest))
+            return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
+
+        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _tracking_probe)
+        relays = ["a.example", "b.example"]
+        args = _make_args(tmp_path, workers=2)
+        executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
+        exclude = {("a.example", "b.example")}
+        try:
+            run_round(relays, args, executors, exclude=exclude)
+        finally:
+            for ex in executors:
+                ex.shutdown(wait=False)
+
+        # 4 pairs minus 1 excluded = 3
+        assert len(probed_pairs) == 3
+        assert ("a.example", "b.example") not in probed_pairs
