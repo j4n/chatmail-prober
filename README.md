@@ -24,11 +24,11 @@ host3.example
 EOF
 
 # Install and run (pick one)
-uv run chatmail-prober --relays relays.txt 
+uv run chatmail-prober relays.txt
 
-# pip + venv 
+# pip + venv
 make install
-.venv/bin/chatmail-prober --relays relays.txt
+.venv/bin/chatmail-prober relays.txt
 ```
 
 ## Output modes
@@ -37,10 +37,10 @@ chatmail-prober supports two output modes (or both simultaneously):
 
 ```bash
 # Textfile for node_exporter's textfile collector
-chatmail-prober --relays relays.txt --textfile /var/lib/prometheus/node-exporter/chatmail-prober.prom
+chatmail-prober relays.txt --textfile /var/lib/prometheus/node-exporter/chatmail-prober.prom
 
 # HTTP exporter (for Prometheus to scrape directly)
-chatmail-prober --relays relays.txt --port 9740
+chatmail-prober relays.txt --port 9740
 ```
 And look at `curl http://localhost:9740/metrics` to see the metrics.
 
@@ -49,7 +49,7 @@ And look at `curl http://localhost:9740/metrics` to see the metrics.
 ```
 --auto-fetch PATH    fetch relay list from https://chatmail.at/relays and write 
                      to PATH before starting
---relays PATH        Relay list file, one domain per line (required)
+RELAYS               Relay list file(s), one domain per line (positional arg)
 --scan               Self-probe all relays, print ranked by RTT, then exit
 --top N              Number of fastest relays to highlight in --scan output (default: 10)
 --port PORT          HTTP listen port (default: off, e.g. --port 9740)
@@ -57,9 +57,10 @@ And look at `curl http://localhost:9740/metrics` to see the metrics.
 --interval SECS      Seconds between probe rounds (default: 900 = 15min)
 --count N            Pings per pair per round (default: 5)
 --ping-interval S    Seconds between pings within a probe (default: 0.1)
---timeout SECS       Per-pair receive timeout in seconds (default: 45)
+--timeout SECS       Per-pair receive timeout in seconds (default: 60)
 --workers N          Max concurrent probe threads (default: 5)
 --cache-dir PATH     Base dir for per-worker account directories (default: ~/.cache/chatmail-prober)
+--exclude PATH       File of pairs to skip: "src->dst" per line (# comments)
 --once               Run one round then exit
 -v                   Debug messages from chatmail_prober
 -vv                  Also show cmping errors and stats
@@ -84,9 +85,15 @@ A SIGUSR1 signal (`kill -USR1`) stops the service after finishing the current pr
 | `cmping_rtt_stddev_seconds`    | Gauge   | Standard deviation of round-trip times              |
 | `cmping_send_errors_total`     | Counter | Failed probe rounds (timeout, crash, setup failure) |
 | `cmping_account_setup_seconds` | Gauge   | Time spent on account setup                         |
+| `cmping_last_round_completion_timestamp` | Gauge | Unix timestamp of last completed round  |
+| `cmping_round_duration_seconds` | Gauge   | Wall-clock time of last completed round              |
 
-All metrics have `source`, `destination`, and `probe_type` labels.
+Per-pair metrics have `source`, `destination`, and `probe_type` labels.
 `probe_type` is `"self"` when source equals destination, `"cross"` otherwise.
+The last two (round-level) metrics have no labels.
+
+On probe error, RTT gauges are set to NaN so dashboards show a gap
+instead of stale values from the previous successful round.
 
 ## Operation Overview
 
@@ -109,7 +116,7 @@ Before starting the matrix, chatmail-prober runs a single self-probe on each rel
 parallel. Dead relays are excluded with a warning rather than failing the whole run.
 This means a TLS outage on one relay does not invalidate an entire round.
 
-This can be invoked as only function with `--scan` to print a list ranked
+This can be invoked standalone with `--scan` to print a list ranked by RTT.
 
 ### Burst-mode probing
 
@@ -168,7 +175,7 @@ sudo systemctl reload chatmail-prober
 
 ## Grafana dashboards
 
-Three dashboards are included in `grafana/`:
+Two dashboards are included in `grafana/`:
 
 - **dashboard-inter.json** -- Cross-relay overview: pair matrix, probe results table, per-pair RTT panels
 - **dashboard-single.json** -- Single relay inspection: self-probe smokeping plot, peer connectivity timelines, per-peer smokeping detail

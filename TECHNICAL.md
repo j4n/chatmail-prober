@@ -399,6 +399,10 @@ flowchart LR
     ERR --> M5
     ERR --> M6
     ERR --> M7
+    ERR -->|"set NaN"| M1
+    ERR -->|"set NaN"| M2
+    ERR -->|"set NaN"| M3
+    ERR -->|"set NaN"| M4
     OK --> M1
     OK --> M2
     OK --> M3
@@ -413,13 +417,28 @@ flowchart LR
 
 ### Labels
 
-All metrics carry three labels:
+Per-pair metrics carry three labels:
 
 | Label | Values |
 |---|---|
 | `source` | source relay domain |
 | `destination` | destination relay domain |
 | `probe_type` | `"self"` if src==dst, `"cross"` otherwise |
+
+Round-level metrics (`cmping_last_round_completion_timestamp`,
+`cmping_round_duration_seconds`) have no labels.
+
+### Error behavior
+
+On probe error, RTT gauges (median, p10, p90, stddev) and
+`account_setup_seconds` are set to NaN so Grafana panels show a gap
+instead of stale values from the previous successful round.
+
+### Stale label cleanup
+
+At the start of each round, `clear_stale_labels()` removes metric label
+sets for relays no longer in the active set.  This prevents label
+cardinality from growing unbounded when relays are removed.
 
 ### Registry split
 
@@ -569,10 +588,8 @@ flowchart TD
 
 | File | Purpose | Key panels |
 |---|---|---|
-| `dashboard-intra.json` | Self-probe health per relay | RTT median/p90/stddev, state timeline, top N |
 | `dashboard-inter.json` | Cross-relay RTT matrix | Heatmap, pair table, per-pair smokeping |
 | `dashboard-single.json` | Single relay deep-dive | Smokeping plot, peer RTT breakdown |
-| `dashboard.json` | Legacy consolidated view | Mixed self + cross metrics |
 
 All dashboards use a `$datasource` template variable to select the Prometheus
 instance.  RTT panels use three queries (p10, median, p90) to draw the
@@ -591,7 +608,7 @@ cmping_rtt_p90_seconds{...}
 cmping_rtt_p10_seconds{...}
 ```
 
-Thresholds: green <1s, blue <3s, yellow <5s, orange <10s, red >=10s.
+Thresholds: dark-green <2s, green <6s, light-green <24s, yellow <48s, red <60s, dark-red >=60s.
 
 ---
 
@@ -613,8 +630,9 @@ chatmail-prober [relays_file ...] [options]
 | `--timeout` | `60` | Per-pair receive timeout in seconds |
 | `--workers` | `5` | Concurrent worker threads |
 | `--cache-dir` | `~/.cache/chatmail-prober` | Root for per-worker account dirs |
+| `--exclude PATH` | `None` | File of pairs to skip: `src->dst` per line |
 | `--once` | false | Run one round then exit (useful with --textfile in cron) |
-| `--scan` | false | Self-probe all relays, print ranked by RTT, exit |
+| `--scan` | false | Self-probe all relays in parallel, print ranked by RTT, exit |
 | `--top N` | `10` | Relays to highlight in --scan output |
 | `-v` / `-vv` / `-vvv` | 0 | Verbosity: debug / cmping errors / cmping events |
 | `-q` | false | Quiet: suppress progress, show only warnings/errors |
@@ -631,6 +649,14 @@ fetch URL is `https://chatmail.at/relays` (parses `<a class="hilite">` entries).
 nine.testrun.org
 mehl.cloud
 tarpit.fun
+```
+
+### Exclude list format
+
+```
+# Skip known-broken pairs (one per line)
+broken-relay.example -> mehl.cloud
+tarpit.fun -> broken-relay.example
 ```
 
 ---
