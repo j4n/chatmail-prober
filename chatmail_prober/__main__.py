@@ -161,15 +161,24 @@ def parse_args(argv=None):
 
 
 def scan_relays(relays, args):
-    """Self-probe all relays sequentially, print ranked by avg RTT, then exit."""
+    """Self-probe all relays in parallel, print ranked by avg RTT, then exit."""
     log.info("Scanning %d relays...", len(relays))
     cache_dir = Path(args.cache_dir).expanduser()
 
     results = {}
-    for r in relays:
-        log.info("Probing %s...", r)
-        results[r] = run_probe(r, r, args.count, args.ping_interval,
-                               str(cache_dir / "scan"), args.timeout, args.verbose)
+    with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
+        futures = {
+            pool.submit(run_probe, r, r, args.count, args.ping_interval,
+                        str(cache_dir / "scan" / r), args.timeout, args.verbose): r
+            for r in relays
+        }
+        for future in as_completed(futures):
+            relay = futures[future]
+            results[relay] = future.result()
+            if results[relay].error:
+                log.info("DEAD %s: %s", relay, results[relay].error)
+            else:
+                log.info("OK   %s (%.0fms)", relay, _avg_ms(results[relay].rtts_ms))
 
     ranked = sorted(
         relays,
