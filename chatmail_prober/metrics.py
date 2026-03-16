@@ -90,6 +90,13 @@ def update_metrics(result):
         send_errors_total.labels(**labels).inc()
         probe_success.labels(**labels).set(0)
         probe_loss_ratio.labels(**labels).set(1.0)
+        # Clear RTT gauges so dashboards don't show stale values from the
+        # last successful round while probe_success=0.
+        rtt_median.labels(**labels).set(float("nan"))
+        rtt_p90.labels(**labels).set(float("nan"))
+        rtt_p10.labels(**labels).set(float("nan"))
+        rtt_stddev.labels(**labels).set(float("nan"))
+        account_setup_seconds.labels(**labels).set(float("nan"))
         return
 
     probe_success.labels(**labels).set(1 if result.loss == 0 else 0)

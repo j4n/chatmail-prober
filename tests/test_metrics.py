@@ -113,15 +113,18 @@ class TestUpdateMetricsError:
         assert metrics_mod.probe_success.labels(**_labels())._value.get() == 0.0
         assert metrics_mod.probe_loss_ratio.labels(**_labels())._value.get() == 1.0
 
-    def test_error_does_not_touch_rtt_gauges(self):
+    def test_error_clears_rtt_gauges_to_nan(self):
+        """RTT gauges must be NaN on error so dashboards don't show stale values."""
+        import math
         result = ProbeResult("a.example", "b.example", error="boom")
         metrics_mod.update_metrics(result)
 
         lbl = _labels()
-        assert metrics_mod.rtt_median.labels(**lbl)._value.get() == 0.0
-        assert metrics_mod.rtt_p90.labels(**lbl)._value.get() == 0.0
-        assert metrics_mod.rtt_p10.labels(**lbl)._value.get() == 0.0
-        assert metrics_mod.rtt_stddev.labels(**lbl)._value.get() == 0.0
+        assert math.isnan(metrics_mod.rtt_median.labels(**lbl)._value.get())
+        assert math.isnan(metrics_mod.rtt_p90.labels(**lbl)._value.get())
+        assert math.isnan(metrics_mod.rtt_p10.labels(**lbl)._value.get())
+        assert math.isnan(metrics_mod.rtt_stddev.labels(**lbl)._value.get())
+        assert math.isnan(metrics_mod.account_setup_seconds.labels(**lbl)._value.get())
 
 
 class TestProbeType:
