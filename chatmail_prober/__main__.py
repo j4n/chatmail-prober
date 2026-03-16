@@ -265,7 +265,7 @@ def check_relays_alive(relays, args):
     return alive
 
 
-def run_round(relays, args, executors, shutdown_event=None):
+def run_round(relays, args, executors, shutdown_event=None, textfile=None):
     """Run one complete probe round across all relay pairs.
 
     Pairs are distributed round-robin across the per-worker executors so each
@@ -315,6 +315,8 @@ def run_round(relays, args, executors, shutdown_event=None):
         update_metrics(result)
         if completed % 50 == 0:
             gc.collect()
+            if textfile:
+                write_textfile(textfile)
         if result.error:
             log.warning("[%d/%d] %s -> %s: ERROR %s", completed, len(pairs), src, dst, result.error)
         else:
@@ -434,7 +436,8 @@ def main(argv=None):
 
     try:
         while not shutdown_event.is_set():
-            elapsed = run_round(relays, args, executors, shutdown_event)
+            elapsed = run_round(relays, args, executors, shutdown_event,
+                                textfile=args.textfile)
 
             if args.textfile:
                 write_textfile(args.textfile)
