@@ -80,6 +80,28 @@ account_setup_seconds = Gauge(
 )
 
 
+def clear_stale_labels(active_relays):
+    """Remove label sets for relays no longer in the active set.
+
+    Prevents label cardinality from growing unbounded when relays are
+    removed from the relay list across process restarts or alive-check
+    exclusions.
+    """
+    import sys
+    mod = sys.modules[__name__]
+    all_metrics = [
+        mod.rtt_median, mod.rtt_stddev, mod.rtt_p90, mod.rtt_p10,
+        mod.probe_success, mod.probe_loss_ratio, mod.account_setup_seconds,
+        mod.send_errors_total,
+    ]
+    active = set(active_relays)
+    for metric in all_metrics:
+        for label_values in list(metric._metrics.keys()):
+            src, dst, _ = label_values
+            if src not in active or dst not in active:
+                metric.remove(*label_values)
+
+
 def update_metrics(result):
     """Update Prometheus metrics from a ProbeResult."""
     probe_type = "self" if result.source == result.destination else "cross"

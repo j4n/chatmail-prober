@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from .metrics import update_metrics
+from .metrics import clear_stale_labels, update_metrics
 from .output import start_exporter_server, write_textfile
 from .prober import ProbeResult, run_probe
 
@@ -268,6 +268,7 @@ def run_round(relays, args, executors, shutdown_event=None):
     without recording metrics for in-flight probes (which would show spurious
     errors from killed rpc-server processes).
     """
+    clear_stale_labels(relays)
     pairs = [(s, d) for s in relays for d in relays]
     log.info("Starting probe round: %d pairs, %d workers", len(pairs), args.workers)
     round_start = time.time()

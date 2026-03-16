@@ -158,3 +158,37 @@ class TestUpdateMetricsMultiplePairs:
             source="a.example", destination="b.example", probe_type="cross")._value.get() == 1.0
         assert metrics_mod.probe_success.labels(
             source="b.example", destination="a.example", probe_type="cross")._value.get() == 0.0
+
+
+class TestClearStaleLabels:
+    def test_removes_labels_for_removed_relay(self):
+        r1 = ProbeResult("a.example", "b.example", sent=1, received=1, loss=0.0,
+                         rtts_ms=[100.0])
+        r2 = ProbeResult("a.example", "a.example", sent=1, received=1, loss=0.0,
+                         rtts_ms=[50.0])
+        metrics_mod.update_metrics(r1)
+        metrics_mod.update_metrics(r2)
+
+        # Both label sets exist
+        assert ("a.example", "b.example", "cross") in metrics_mod.probe_success._metrics
+        assert ("a.example", "a.example", "self") in metrics_mod.probe_success._metrics
+
+        # Remove b.example from active set
+        metrics_mod.clear_stale_labels(["a.example"])
+
+        # b.example labels should be gone, a.example self-loop should remain
+        assert ("a.example", "b.example", "cross") not in metrics_mod.probe_success._metrics
+        assert ("a.example", "a.example", "self") in metrics_mod.probe_success._metrics
+
+    def test_clears_all_metric_types(self):
+        r = ProbeResult("a.example", "gone.example", error="dead")
+        metrics_mod.update_metrics(r)
+
+        lbl = ("a.example", "gone.example", "cross")
+        assert lbl in metrics_mod.send_errors_total._metrics
+        assert lbl in metrics_mod.rtt_median._metrics
+
+        metrics_mod.clear_stale_labels(["a.example"])
+
+        assert lbl not in metrics_mod.send_errors_total._metrics
+        assert lbl not in metrics_mod.rtt_median._metrics
