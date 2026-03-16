@@ -79,6 +79,18 @@ account_setup_seconds = Gauge(
     registry=CMPING_REGISTRY,
 )
 
+last_round_timestamp = Gauge(
+    "cmping_last_round_completion_timestamp",
+    "Unix timestamp of the last completed probe round (for staleness alerting)",
+    registry=CMPING_REGISTRY,
+)
+
+round_duration_seconds = Gauge(
+    "cmping_round_duration_seconds",
+    "Wall-clock duration of the last completed probe round",
+    registry=CMPING_REGISTRY,
+)
+
 
 def clear_stale_labels(active_relays):
     """Remove label sets for relays no longer in the active set.

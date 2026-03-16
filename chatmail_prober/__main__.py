@@ -22,7 +22,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from .metrics import clear_stale_labels, update_metrics
+from .metrics import (
+    clear_stale_labels, last_round_timestamp, round_duration_seconds,
+    update_metrics,
+)
 from .output import start_exporter_server, write_textfile
 from .prober import ProbeResult, run_probe
 
@@ -343,6 +346,8 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None):
             )
 
     elapsed = time.time() - round_start
+    last_round_timestamp.set(time.time())
+    round_duration_seconds.set(elapsed)
     log.info("Probe round complete in %.1fs", elapsed)
     return elapsed
 
