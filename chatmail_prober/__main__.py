@@ -233,7 +233,6 @@ def check_relays_alive(relays, args):
                 relay = futures[future]
                 completed.add(relay)
                 result = future.result()
-                update_metrics(result)
                 if result.error:
                     log.warning("DEAD %s: %s", relay, result.error)
                     dead.add(relay)
