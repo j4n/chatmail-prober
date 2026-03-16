@@ -198,11 +198,16 @@ def scan_relays(relays, args):
     _print()
 
 
-def _kill_stale_rpc_servers(cache_dir):
+def _kill_stale_rpc_servers(cache_dir, graceful=True):
     """Kill orphaned deltachat-rpc-server processes from a previous crash.
 
     Only targets processes whose command line contains our cache_dir path,
     so unrelated deltachat instances are not affected.
+
+    When graceful=True (default, used at startup), sends SIGTERM first and
+    waits briefly for a clean shutdown before escalating to SIGKILL.  This
+    lets sqlite close its WAL cleanly.  When graceful=False (used during
+    signal-handler shutdown where speed matters), goes straight to SIGKILL.
     """
     cache_str = str(cache_dir)
     try:
@@ -212,11 +217,22 @@ def _kill_stale_rpc_servers(cache_dir):
         )
         if result.returncode != 0:
             return
-        pids = result.stdout.strip().split()
+        pids = [int(p) for p in result.stdout.strip().split()]
+        if graceful:
+            for pid in pids:
+                log.warning("Sending SIGTERM to stale deltachat-rpc-server (PID %d)", pid)
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    continue
+            time.sleep(2)
         for pid in pids:
-            log.warning("Killing stale deltachat-rpc-server (PID %s)", pid)
-            os.kill(int(pid), signal.SIGKILL)
-    except (FileNotFoundError, ProcessLookupError, ValueError):
+            try:
+                os.kill(pid, signal.SIGKILL)
+                log.warning("Sent SIGKILL to deltachat-rpc-server (PID %d)", pid)
+            except ProcessLookupError:
+                pass  # already exited from SIGTERM
+    except (FileNotFoundError, ValueError):
         pass
 
 
@@ -411,7 +427,7 @@ def main(argv=None):
         log.info("Shutting down, killing running probes...")
         for ex in executors:
             ex.shutdown(wait=False, cancel_futures=True)
-        _kill_stale_rpc_servers(Path(args.cache_dir).expanduser())
+        _kill_stale_rpc_servers(Path(args.cache_dir).expanduser(), graceful=False)
         # Main thread may be stuck in as_completed(); force exit after 5s.
         threading.Timer(5.0, os._exit, args=(0,)).start()
 
