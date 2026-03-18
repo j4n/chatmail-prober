@@ -1,7 +1,6 @@
 """Wraps cmping's perform_ping() for use by the exporter."""
 
 import argparse
-import builtins
 import logging
 import os
 import sys
@@ -23,12 +22,12 @@ _ensure_venv_on_path()
 
 log = logging.getLogger(__name__)
 
-# Monkey-patch print to a no-op. cmping uses print() for all its
-# user-facing output (statistics, progress). We don't want any of
-# that — we extract data from the Pinger object instead. This is
-# safe for concurrent threads because the replacement is installed
-# once at import time and is a plain function call (no fd tricks).
-builtins.print = lambda *args, **kwargs: None
+# Silence cmping's own logging output.  cmping now uses the "cmping"
+# logger for all progress/debug messages and print() only for primary
+# CLI output (RTT lines, statistics).  Setting its logger to WARNING
+# suppresses the info/debug chatter without the old builtins.print
+# monkey-patch.
+logging.getLogger("cmping").setLevel(logging.WARNING)
 
 
 @dataclass

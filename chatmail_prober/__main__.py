@@ -5,11 +5,6 @@ and exposes round-trip time histograms, counters, and success gauges
 as Prometheus metrics.
 """
 
-import builtins
-
-# Save real print before prober.py's cmping import monkey-patches builtins.print.
-_print = builtins.print
-
 import argparse
 import gc
 import logging
@@ -215,17 +210,17 @@ def scan_relays(relays, args):
         key=lambda r: _avg_ms(results[r].rtts_ms) if results[r].rtts_ms else float("inf"),
     )
 
-    _print("\nScan results (fastest first):\n")
-    _print(f"  {'Rank':<5} {'Relay':<40} {'Avg RTT':>10} {'Loss':>8} {'Samples':>8}")
-    _print(f"  {'-'*5} {'-'*40} {'-'*10} {'-'*8} {'-'*8}")
+    print("\nScan results (fastest first):\n")
+    print(f"  {'Rank':<5} {'Relay':<40} {'Avg RTT':>10} {'Loss':>8} {'Samples':>8}")
+    print(f"  {'-'*5} {'-'*40} {'-'*10} {'-'*8} {'-'*8}")
     for i, relay in enumerate(ranked, 1):
         r = results[relay]
         if r.error:
-            _print(f"  {i:<5} {relay:<40} {'DEAD':>10} {'':>8} {'':>8}")
+            print(f"  {i:<5} {relay:<40} {'DEAD':>10} {'':>8} {'':>8}")
         else:
             marker = " <--" if i <= args.top else ""
-            _print(f"  {i:<5} {relay:<40} {_avg_ms(r.rtts_ms):>9.0f}ms {r.loss:>7.1f}% {len(r.rtts_ms):>8}{marker}")
-    _print()
+            print(f"  {i:<5} {relay:<40} {_avg_ms(r.rtts_ms):>9.0f}ms {r.loss:>7.1f}% {len(r.rtts_ms):>8}{marker}")
+    print()
 
 
 def _kill_stale_rpc_servers(cache_dir, graceful=True):
@@ -399,9 +394,9 @@ def main(argv=None):
     else:
         log.setLevel(logging.INFO)
 
-    # At -vv or higher, restore print so cmping's own output is visible.
+    # At -vv or higher, lower cmping's log level so its debug output is visible.
     if args.verbose >= 2:
-        builtins.print = _print
+        logging.getLogger("cmping").setLevel(logging.DEBUG)
 
     # Raise the fd soft limit to the hard limit so large relay matrices
     # don't hit the default 1024 cap when deltachat-rpc-server opens many DBs.
@@ -479,12 +474,13 @@ def main(argv=None):
     signal.signal(signal.SIGUSR1, _handle_usr1)
 
     # Verbosity cycle: quiet -> normal -> -v -> -vv -> quiet ...
+    _cmping_log = logging.getLogger("cmping")
     _verbosity_levels = [
-        # (log_level, restore_print, args_verbose, label)
-        (logging.WARNING, False, 0, "quiet"),
-        (logging.INFO,    False, 0, "normal"),
-        (logging.DEBUG,   False, 1, "-v (debug)"),
-        (logging.DEBUG,   True,  2, "-vv (debug + cmping)"),
+        # (log_level, cmping_level, args_verbose, label)
+        (logging.WARNING, logging.WARNING, 0, "quiet"),
+        (logging.INFO,    logging.WARNING, 0, "normal"),
+        (logging.DEBUG,   logging.WARNING, 1, "-v (debug)"),
+        (logging.DEBUG,   logging.DEBUG,   2, "-vv (debug + cmping)"),
     ]
 
     # Determine starting position in the cycle from startup flags.
@@ -500,10 +496,10 @@ def main(argv=None):
     def _handle_usr2(signum, frame):
         nonlocal _verbosity_idx
         _verbosity_idx = (_verbosity_idx + 1) % len(_verbosity_levels)
-        level, restore_print, verbose, label = _verbosity_levels[_verbosity_idx]
+        level, cmping_level, verbose, label = _verbosity_levels[_verbosity_idx]
         log.setLevel(level)
+        _cmping_log.setLevel(cmping_level)
         args.verbose = verbose
-        builtins.print = _print if restore_print else lambda *a, **kw: None
         # Log at WARNING so it's visible regardless of current level.
         log.warning("SIGUSR2: verbosity -> %s", label)
 
