@@ -128,7 +128,7 @@ class TestPairGeneration:
 def _make_args(tmp_path, workers=2):
     return argparse.Namespace(
         count=1, ping_interval=0.1, timeout=10, workers=workers,
-        cache_dir=str(tmp_path / "cache"), verbose=0,
+        cache_dir=str(tmp_path / "cache"), verbose=0, direct=True,
     )
 
 
@@ -152,12 +152,28 @@ def _fresh_metrics(monkeypatch):
     return new
 
 
-def _fake_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=False):
+def _fake_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=True):
     return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
+
+
+class _FakePool:
+    """Stand-in for RelayPool that does not spawn RPC servers."""
+    def __init__(self, *a, **kw):
+        pass
+
+    def open_all(self, relays):
+        pass
+
+    def contexts(self):
+        return {}
+
+    def close(self):
+        pass
 
 
 class TestRunRound:
     def test_completes_all_pairs(self, tmp_path, monkeypatch, _fresh_metrics):
+        monkeypatch.setattr("chatmail_prober.__main__.RelayPool", _FakePool)
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
         relays = ["a.example", "b.example", "c.example"]
         args = _make_args(tmp_path, workers=2)
@@ -177,10 +193,11 @@ class TestRunRound:
                 assert val == 1.0, f"{s} -> {d} not recorded"
 
     def test_shutdown_skips_metrics(self, tmp_path, monkeypatch, _fresh_metrics):
+        monkeypatch.setattr("chatmail_prober.__main__.RelayPool", _FakePool)
         shutdown_event = threading.Event()
         call_count = 0
 
-        def _slow_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=False):
+        def _slow_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=True):
             nonlocal call_count
             call_count += 1
             # After a couple of probes complete, trigger shutdown.
@@ -214,7 +231,9 @@ class TestRunRound:
         assert recorded < 9, f"Expected some pairs skipped, but all {recorded} recorded"
 
     def test_crashed_probe_records_error(self, tmp_path, monkeypatch, _fresh_metrics):
-        def _crashing_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=False):
+        monkeypatch.setattr("chatmail_prober.__main__.RelayPool", _FakePool)
+
+        def _crashing_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=True):
             if source == "a.example" and dest == "b.example":
                 raise RuntimeError("boom")
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
@@ -285,9 +304,10 @@ class TestReadExcludeList:
 
 class TestRunRoundExclude:
     def test_excludes_pairs(self, tmp_path, monkeypatch, _fresh_metrics):
+        monkeypatch.setattr("chatmail_prober.__main__.RelayPool", _FakePool)
         probed_pairs = []
 
-        def _tracking_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=False):
+        def _tracking_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=True):
             probed_pairs.append((source, dest))
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 

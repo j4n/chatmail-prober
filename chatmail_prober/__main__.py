@@ -183,9 +183,11 @@ def parse_args(argv=None):
         help='file of pairs to skip, one per line: "src->dst" (# comments allowed)',
     )
     parser.add_argument(
-        "--direct",
-        action="store_true",
-        help="use 1:1 chat instead of group (no join wait, faster one-way measurement)",
+        "--no-direct",
+        dest="direct",
+        action="store_false",
+        default=True,
+        help="use group chat instead of 1:1 (slower, requires join wait)",
     )
     return parser.parse_args(argv)
 
@@ -345,7 +347,7 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None,
         for worker_id, executor in enumerate(executors):
             for src, dst in worker_pairs[worker_id]:
                 try:
-                    direct = getattr(args, "direct", True)
+                    direct = args.direct
                     future = executor.submit(
                         run_probe, src, dst, args.count, args.ping_interval,
                         timeout=args.timeout, verbose=args.verbose,
@@ -365,7 +367,7 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None,
             try:
                 result = future.result()
             except Exception as exc:
-                log.exception("Worker crashed for %s -> %s", src, dst)
+                log.exception("src=%s dst=%s worker_crash", src, dst)
                 result = ProbeResult(src, dst, error=str(exc))
             update_metrics(result)
             if completed % 50 == 0:
@@ -373,11 +375,14 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None,
                 if textfile:
                     write_textfile(textfile)
             if result.error:
-                log.warning("[%d/%d] %s -> %s: ERROR %s", completed, len(pairs), src, dst, result.error)
+                log.warning(
+                    "[%d/%d] src=%s dst=%s error=%s",
+                    completed, len(pairs), src, dst, result.error,
+                )
             else:
                 log.info(
-                    "[%d/%d] %s -> %s: %d/%d received, avg %.0fms, loss %.1f%%",
-                    completed, len(pairs), src, dst, result.received, result.sent,
+                    "[%d/%d] src=%s dst=%s sent=%d recv=%d avg_ms=%.0f loss=%.1f%%",
+                    completed, len(pairs), src, dst, result.sent, result.received,
                     _avg_ms(result.rtts_ms), result.loss,
                 )
     finally:
