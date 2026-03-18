@@ -104,7 +104,7 @@ def run_probe(
     timeout: float = 60.0,
     verbose: int = 0,
     relay_contexts: dict | None = None,
-    direct: bool = False,
+    direct: bool = True,
 ) -> ProbeResult:
     """Run a single cmping probe between two relays.
 

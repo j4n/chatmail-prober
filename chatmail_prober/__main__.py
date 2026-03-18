@@ -345,7 +345,7 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None,
         for worker_id, executor in enumerate(executors):
             for src, dst in worker_pairs[worker_id]:
                 try:
-                    direct = getattr(args, "direct", False)
+                    direct = getattr(args, "direct", True)
                     future = executor.submit(
                         run_probe, src, dst, args.count, args.ping_interval,
                         timeout=args.timeout, verbose=args.verbose,

@@ -113,22 +113,35 @@ class TestRunProbeErrors:
 
 
 class TestRunProbeWithContexts:
-    @patch("chatmail_prober.prober.perform_ping_with_contexts")
-    def test_uses_perform_ping_with_contexts(self, mock_ctx_ping):
-        """When relay_contexts is provided, use perform_ping_with_contexts."""
-        mock_ctx_ping.return_value = FakePinger()
+    @patch("chatmail_prober.prober.perform_direct_ping")
+    def test_direct_mode_default(self, mock_direct):
+        """With relay_contexts and direct=True (default), use perform_direct_ping."""
+        mock_direct.return_value = FakePinger()
         contexts = {"a.test": MagicMock(), "b.test": MagicMock()}
         result = run_probe("a.test", "b.test", count=3, relay_contexts=contexts)
 
         assert result.sent == 3
         assert result.received == 3
+        mock_direct.assert_called_once()
+        call_args = mock_direct.call_args
+        assert call_args[0][1] is contexts
+
+    @patch("chatmail_prober.prober.perform_ping_with_contexts")
+    def test_group_mode_with_contexts(self, mock_ctx_ping):
+        """With relay_contexts and direct=False, use perform_ping_with_contexts."""
+        mock_ctx_ping.return_value = FakePinger()
+        contexts = {"a.test": MagicMock(), "b.test": MagicMock()}
+        result = run_probe("a.test", "b.test", count=3, relay_contexts=contexts,
+                           direct=False)
+
+        assert result.sent == 3
         mock_ctx_ping.assert_called_once()
         call_args = mock_ctx_ping.call_args
         assert call_args[0][1] is contexts
 
-    @patch("chatmail_prober.prober.perform_ping_with_contexts")
-    def test_error_with_contexts(self, mock_ctx_ping):
-        mock_ctx_ping.side_effect = CMPingError("rpc failed")
+    @patch("chatmail_prober.prober.perform_direct_ping")
+    def test_error_with_contexts(self, mock_direct):
+        mock_direct.side_effect = CMPingError("rpc failed")
         contexts = {"a.test": MagicMock()}
         result = run_probe("a.test", "b.test", count=1, relay_contexts=contexts)
 
