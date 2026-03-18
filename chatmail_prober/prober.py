@@ -9,7 +9,7 @@ from pathlib import Path
 
 from cmping import (
     CMPingError, RelayContext, perform_direct_ping, perform_ping,
-    perform_ping_with_contexts,
+    perform_ping_with_contexts, set_cli_output,
 )
 
 
@@ -25,10 +25,9 @@ _ensure_venv_on_path()
 
 log = logging.getLogger(__name__)
 
-# cmping's CLI output (RTT lines, statistics) is gated behind
-# log.isEnabledFor(INFO) so it stays silent when used as a library.
-# We keep the cmping logger at INFO so structured diagnostic messages
-# (phase=online, phase=setup, phase=direct) are visible in the prober.
+# Suppress cmping's CLI output (progress spinners, RTT lines, statistics)
+# while keeping structured log messages (phase=online, phase=setup) visible.
+set_cli_output(False)
 logging.getLogger("cmping").setLevel(logging.INFO)
 
 

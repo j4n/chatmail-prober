@@ -239,21 +239,15 @@ class TestCmpingVerbose:
         assert _cmping_verbose(3) == 3
 
 
-class TestCmpingLoggerLevel:
-    """Verify the cmping logger is at INFO so structured messages are visible."""
+class TestCmpingCliOutput:
+    """Verify cmping CLI output is suppressed but structured logs work."""
 
-    def test_cmping_logger_at_info(self):
-        import logging
-        cmping_logger = logging.getLogger("cmping")
-        assert cmping_logger.level == logging.INFO
+    def test_cli_output_disabled(self):
+        import cmping
+        assert cmping._cli_output is False
 
     def test_no_stdout_from_probe(self, capsys):
-        """run_probe with mocked perform_ping produces no stdout output.
-
-        cmping's statistics block is gated on log.isEnabledFor(INFO),
-        and the cmping logger is at INFO. But perform_ping is mocked here
-        so the statistics block never runs. This verifies the wrapper
-        itself doesn't emit to stdout."""
+        """run_probe with mocked perform_ping produces no stdout output."""
         with patch("chatmail_prober.prober.perform_ping") as mock_ping:
             mock_ping.return_value = FakePinger()
             run_probe("a.test", "b.test", count=3, accounts_dir="/tmp/test-cache")
@@ -261,7 +255,7 @@ class TestCmpingLoggerLevel:
         assert captured.out == ""
 
     def test_structured_log_visible(self, caplog):
-        """Structured log.info messages from cmping are visible at default level."""
+        """Structured log.info messages from cmping are visible."""
         import logging
         with caplog.at_level(logging.INFO, logger="cmping"):
             logging.getLogger("cmping").info("phase=test status=ok")
