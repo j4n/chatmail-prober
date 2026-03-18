@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from cmping import CMPingError
-from chatmail_prober.prober import run_probe, ProbeResult
+from chatmail_prober.prober import run_probe, ProbeResult, RelayPool, _cmping_verbose
 
 
 class FakePinger:
@@ -110,3 +110,90 @@ class TestRunProbeErrors:
 
         assert result.source == "src.example"
         assert result.destination == "dst.example"
+
+
+class TestRunProbeWithContexts:
+    @patch("chatmail_prober.prober.perform_ping_with_contexts")
+    def test_uses_perform_ping_with_contexts(self, mock_ctx_ping):
+        """When relay_contexts is provided, use perform_ping_with_contexts."""
+        mock_ctx_ping.return_value = FakePinger()
+        contexts = {"a.test": MagicMock(), "b.test": MagicMock()}
+        result = run_probe("a.test", "b.test", count=3, relay_contexts=contexts)
+
+        assert result.sent == 3
+        assert result.received == 3
+        mock_ctx_ping.assert_called_once()
+        call_args = mock_ctx_ping.call_args
+        assert call_args[0][1] is contexts
+
+    @patch("chatmail_prober.prober.perform_ping_with_contexts")
+    def test_error_with_contexts(self, mock_ctx_ping):
+        mock_ctx_ping.side_effect = CMPingError("rpc failed")
+        contexts = {"a.test": MagicMock()}
+        result = run_probe("a.test", "b.test", count=1, relay_contexts=contexts)
+
+        assert result.error == "rpc failed"
+
+    @patch("chatmail_prober.prober.perform_ping")
+    def test_without_contexts_uses_perform_ping(self, mock_ping):
+        """When relay_contexts is None, fall back to perform_ping."""
+        mock_ping.return_value = FakePinger()
+        result = run_probe("a.test", "b.test", count=3, accounts_dir="/tmp/c")
+
+        mock_ping.assert_called_once()
+        assert result.sent == 3
+
+
+class TestRelayPool:
+    @patch("chatmail_prober.prober.RelayContext")
+    def test_open_all_creates_contexts(self, MockCtx, tmp_path):
+        pool = RelayPool(tmp_path, verbose=0)
+        pool.open_all(["a.test", "b.test"])
+
+        assert MockCtx.call_count == 2
+        contexts = pool.contexts()
+        assert set(contexts.keys()) == {"a.test", "b.test"}
+
+    @patch("chatmail_prober.prober.RelayContext")
+    def test_open_all_deduplicates(self, MockCtx, tmp_path):
+        pool = RelayPool(tmp_path)
+        pool.open_all(["a.test", "b.test"])
+        pool.open_all(["a.test", "c.test"])
+
+        assert MockCtx.call_count == 3  # a, b, then c (a not repeated)
+        assert set(pool.contexts().keys()) == {"a.test", "b.test", "c.test"}
+
+    @patch("chatmail_prober.prober.RelayContext")
+    def test_close_clears_contexts(self, MockCtx, tmp_path):
+        pool = RelayPool(tmp_path)
+        pool.open_all(["a.test"])
+        pool.close()
+
+        assert pool.contexts() == {}
+        MockCtx.return_value.close.assert_called_once()
+
+    @patch("chatmail_prober.prober.RelayContext")
+    def test_context_manager(self, MockCtx, tmp_path):
+        with RelayPool(tmp_path) as pool:
+            pool.open_all(["a.test"])
+        MockCtx.return_value.close.assert_called_once()
+
+    @patch("chatmail_prober.prober.RelayContext")
+    def test_accounts_dir_per_relay(self, MockCtx, tmp_path):
+        pool = RelayPool(tmp_path)
+        pool.open_all(["relay.example"])
+
+        MockCtx.assert_called_once_with("relay.example",
+                                        tmp_path / "relay.example",
+                                        verbose=0)
+
+
+class TestCmpingVerbose:
+    def test_default(self):
+        assert _cmping_verbose(0) == 0
+
+    def test_level_2(self):
+        assert _cmping_verbose(2) == 1
+
+    def test_level_3(self):
+        assert _cmping_verbose(3) == 3

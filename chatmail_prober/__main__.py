@@ -22,7 +22,7 @@ from .metrics import (
     update_metrics,
 )
 from .output import start_exporter_server, write_textfile
-from .prober import ProbeResult, run_probe
+from .prober import ProbeResult, RelayPool, run_probe, _cmping_verbose
 
 log = logging.getLogger("chatmail_prober")
 
@@ -310,9 +310,9 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None,
               exclude=None):
     """Run one complete probe round across all relay pairs.
 
-    Pairs are distributed round-robin across the per-worker executors so each
-    worker's single thread accesses its own accounts dir sequentially, avoiding
-    deltachat-rpc-server DB lock contention.
+    Opens a RelayPool (one RPC context per relay) for the round and passes
+    shared relay_contexts to each probe.  Pairs are distributed round-robin
+    across per-worker executors.
 
     If shutdown_event is set during the round, the loop breaks immediately
     without recording metrics for in-flight probes (which would show spurious
@@ -325,49 +325,57 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None,
     round_start = time.time()
 
     cache_dir = Path(args.cache_dir).expanduser()
+    pool = RelayPool(cache_dir, verbose=_cmping_verbose(args.verbose))
 
-    # Partition pairs round-robin: pair i goes to worker i % workers
-    worker_pairs = [[] for _ in range(args.workers)]
-    for i, pair in enumerate(pairs):
-        worker_pairs[i % args.workers].append(pair)
+    try:
+        pool.open_all(relays)
+        relay_contexts = pool.contexts()
 
-    all_futures = {}
-    for worker_id, executor in enumerate(executors):
-        worker_dir = cache_dir / f"worker-{worker_id}"
-        for src, dst in worker_pairs[worker_id]:
-            try:
-                future = executor.submit(
-                    run_probe, src, dst, args.count, args.ping_interval, str(worker_dir), args.timeout, args.verbose,
-                )
-            except RuntimeError:
-                # Executor was shut down (e.g. by signal handler).
+        # Partition pairs round-robin: pair i goes to worker i % workers
+        worker_pairs = [[] for _ in range(args.workers)]
+        for i, pair in enumerate(pairs):
+            worker_pairs[i % args.workers].append(pair)
+
+        all_futures = {}
+        for worker_id, executor in enumerate(executors):
+            for src, dst in worker_pairs[worker_id]:
+                try:
+                    future = executor.submit(
+                        run_probe, src, dst, args.count, args.ping_interval,
+                        timeout=args.timeout, verbose=args.verbose,
+                        relay_contexts=relay_contexts,
+                    )
+                except RuntimeError:
+                    # Executor was shut down (e.g. by signal handler).
+                    break
+                all_futures[future] = (src, dst)
+
+        completed = 0
+        for future in as_completed(all_futures):
+            if shutdown_event and shutdown_event.is_set():
                 break
-            all_futures[future] = (src, dst)
-
-    completed = 0
-    for future in as_completed(all_futures):
-        if shutdown_event and shutdown_event.is_set():
-            break
-        completed += 1
-        src, dst = all_futures[future]
-        try:
-            result = future.result()
-        except Exception as exc:
-            log.exception("Worker crashed for %s -> %s", src, dst)
-            result = ProbeResult(src, dst, error=str(exc))
-        update_metrics(result)
-        if completed % 50 == 0:
-            gc.collect()
-            if textfile:
-                write_textfile(textfile)
-        if result.error:
-            log.warning("[%d/%d] %s -> %s: ERROR %s", completed, len(pairs), src, dst, result.error)
-        else:
-            log.info(
-                "[%d/%d] %s -> %s: %d/%d received, avg %.0fms, loss %.1f%%",
-                completed, len(pairs), src, dst, result.received, result.sent,
-                _avg_ms(result.rtts_ms), result.loss,
-            )
+            completed += 1
+            src, dst = all_futures[future]
+            try:
+                result = future.result()
+            except Exception as exc:
+                log.exception("Worker crashed for %s -> %s", src, dst)
+                result = ProbeResult(src, dst, error=str(exc))
+            update_metrics(result)
+            if completed % 50 == 0:
+                gc.collect()
+                if textfile:
+                    write_textfile(textfile)
+            if result.error:
+                log.warning("[%d/%d] %s -> %s: ERROR %s", completed, len(pairs), src, dst, result.error)
+            else:
+                log.info(
+                    "[%d/%d] %s -> %s: %d/%d received, avg %.0fms, loss %.1f%%",
+                    completed, len(pairs), src, dst, result.received, result.sent,
+                    _avg_ms(result.rtts_ms), result.loss,
+                )
+    finally:
+        pool.close()
 
     elapsed = time.time() - round_start
     last_round_timestamp.set(time.time())

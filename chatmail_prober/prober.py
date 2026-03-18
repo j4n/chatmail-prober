@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cmping import CMPingError, perform_ping
+from cmping import CMPingError, RelayContext, perform_ping, perform_ping_with_contexts
 
 
 def _ensure_venv_on_path():
@@ -28,6 +28,54 @@ log = logging.getLogger(__name__)
 # suppresses the info/debug chatter without the old builtins.print
 # monkey-patch.
 logging.getLogger("cmping").setLevel(logging.WARNING)
+
+
+def _cmping_verbose(verbose):
+    """Map prober verbosity to cmping verbosity level."""
+    if verbose >= 3:
+        return 3
+    elif verbose >= 2:
+        return 1
+    return 0
+
+
+class RelayPool:
+    """Manages one RelayContext per relay domain.
+
+    Contexts are opened once and shared across all probes in a round.
+    Uses per-relay accounts dirs (cache_dir/relay) instead of per-worker.
+    """
+
+    def __init__(self, cache_dir, verbose=0):
+        self._cache_dir = Path(cache_dir)
+        self._verbose = verbose
+        self._contexts = {}
+
+    def open_all(self, relays):
+        """Pre-open contexts for all relays.  Fails fast on errors."""
+        for relay in relays:
+            if relay not in self._contexts:
+                ctx = RelayContext(relay, self._cache_dir / relay,
+                                  verbose=self._verbose)
+                ctx.open()
+                self._contexts[relay] = ctx
+
+    def contexts(self):
+        """Return relay -> RelayContext dict (read-only after open_all)."""
+        return dict(self._contexts)
+
+    def close(self):
+        """Close all managed contexts."""
+        for ctx in self._contexts.values():
+            ctx.close()
+        self._contexts.clear()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
 
 
 @dataclass
@@ -52,11 +100,13 @@ def run_probe(
     accounts_dir: str | Path = "~/.cache/chatmail-prober/worker-0",
     timeout: float = 60.0,
     verbose: int = 0,
+    relay_contexts: dict | None = None,
 ) -> ProbeResult:
     """Run a single cmping probe between two relays.
 
-    accounts_dir should be a per-worker directory so the worker's single
-    thread accesses it sequentially, avoiding deltachat-rpc-server DB locks.
+    When relay_contexts is provided (dict of relay -> open RelayContext),
+    uses perform_ping_with_contexts() for shared RPC connections.
+    Otherwise falls back to perform_ping() with accounts_dir.
 
     verbose levels (passed through to cmping):
       0 = silent (default)
@@ -64,15 +114,7 @@ def run_probe(
       2 = full addresses in stats
       3 = all deltachat events (very noisy)
     """
-    accounts_dir = Path(accounts_dir).expanduser()
-
-    # cmping verbose level: -vv (prober) -> verbose=1 (cmping errors),
-    # -vvv (prober) -> verbose=3 (cmping full events).
-    cmping_verbose = 0
-    if verbose >= 3:
-        cmping_verbose = 3
-    elif verbose >= 2:
-        cmping_verbose = 1
+    cmping_verbose = _cmping_verbose(verbose)
 
     args = argparse.Namespace(
         relay1=source,
@@ -85,7 +127,13 @@ def run_probe(
     )
 
     try:
-        pinger = perform_ping(args, accounts_dir=accounts_dir, timeout=timeout)
+        if relay_contexts is not None:
+            pinger = perform_ping_with_contexts(args, relay_contexts,
+                                                timeout=timeout)
+        else:
+            accounts_dir = Path(accounts_dir).expanduser()
+            pinger = perform_ping(args, accounts_dir=accounts_dir,
+                                  timeout=timeout)
         return ProbeResult(
             source=source,
             destination=dest,
