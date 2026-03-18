@@ -497,9 +497,9 @@ def main(argv=None):
     _verbosity_levels = [
         # (log_level, cmping_level, args_verbose, label)
         (logging.WARNING, logging.WARNING, 0, "quiet"),
-        (logging.INFO,    logging.WARNING, 0, "normal"),
-        (logging.DEBUG,   logging.WARNING, 1, "-v (debug)"),
-        (logging.DEBUG,   logging.DEBUG,   2, "-vv (debug + cmping)"),
+        (logging.INFO,    logging.INFO,    0, "normal"),
+        (logging.DEBUG,   logging.INFO,    1, "-v (debug)"),
+        (logging.DEBUG,   logging.DEBUG,   2, "-vv (debug + cmping debug)"),
     ]
 
     # Determine starting position in the cycle from startup flags.

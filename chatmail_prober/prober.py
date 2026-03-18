@@ -25,12 +25,11 @@ _ensure_venv_on_path()
 
 log = logging.getLogger(__name__)
 
-# Silence cmping's own logging output.  cmping now uses the "cmping"
-# logger for all progress/debug messages and print() only for primary
-# CLI output (RTT lines, statistics).  Setting its logger to WARNING
-# suppresses the info/debug chatter without the old builtins.print
-# monkey-patch.
-logging.getLogger("cmping").setLevel(logging.WARNING)
+# cmping's CLI output (RTT lines, statistics) is gated behind
+# log.isEnabledFor(INFO) so it stays silent when used as a library.
+# We keep the cmping logger at INFO so structured diagnostic messages
+# (phase=online, phase=setup, phase=direct) are visible in the prober.
+logging.getLogger("cmping").setLevel(logging.INFO)
 
 
 def _cmping_verbose(verbose):
