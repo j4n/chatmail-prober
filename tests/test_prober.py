@@ -200,6 +200,33 @@ class TestRelayPool:
                                         tmp_path / "relay.example",
                                         verbose=0)
 
+    @patch("chatmail_prober.prober.RelayContext")
+    def test_reopen_replaces_context(self, MockCtx, tmp_path):
+        ctx1 = MagicMock()
+        ctx2 = MagicMock()
+        MockCtx.side_effect = [ctx1, ctx2]
+
+        pool = RelayPool(tmp_path)
+        pool.open_all(["a.test"])
+        assert pool.contexts()["a.test"] is ctx1
+
+        pool.reopen("a.test")
+        assert pool.contexts()["a.test"] is ctx2
+        ctx1.close.assert_called_once()
+
+    @patch("chatmail_prober.prober.RelayContext")
+    def test_reopen_survives_close_error(self, MockCtx, tmp_path):
+        """reopen works even if closing the old context raises."""
+        old_ctx = MagicMock()
+        old_ctx.close.side_effect = RuntimeError("dead")
+        new_ctx = MagicMock()
+        MockCtx.side_effect = [old_ctx, new_ctx]
+
+        pool = RelayPool(tmp_path)
+        pool.open_all(["a.test"])
+        pool.reopen("a.test")  # should not raise
+        assert pool.contexts()["a.test"] is new_ctx
+
 
 class TestCmpingVerbose:
     def test_default(self):

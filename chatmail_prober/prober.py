@@ -66,6 +66,20 @@ class RelayPool:
         """Return relay -> RelayContext dict (read-only after open_all)."""
         return dict(self._contexts)
 
+    def reopen(self, relay):
+        """Close and reopen a single relay's context (e.g. after RPC crash)."""
+        old = self._contexts.pop(relay, None)
+        if old is not None:
+            try:
+                old.close()
+            except Exception:
+                pass
+        ctx = RelayContext(relay, self._cache_dir / relay,
+                          verbose=self._verbose)
+        ctx.open()
+        self._contexts[relay] = ctx
+        log.info("pool: reopened context for %s", relay)
+
     def close(self):
         """Close all managed contexts."""
         for ctx in self._contexts.values():

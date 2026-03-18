@@ -379,6 +379,17 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None,
                     "[%d/%d] src=%s dst=%s error=%s",
                     completed, len(pairs), src, dst, result.error,
                 )
+                # Reopen contexts for relays involved in RPC-level failures
+                # so subsequent probes can recover.
+                _rpc_keywords = ("BrokenPipe", "ConnectionReset", "rpc",
+                                 "EOFError", "dead", "process")
+                if any(kw.lower() in result.error.lower() for kw in _rpc_keywords):
+                    for relay in (src, dst):
+                        try:
+                            pool.reopen(relay)
+                            relay_contexts.update(pool.contexts())
+                        except Exception as reopen_err:
+                            log.warning("Failed to reopen %s: %s", relay, reopen_err)
             else:
                 log.info(
                     "[%d/%d] src=%s dst=%s sent=%d recv=%d avg_ms=%.0f loss=%.1f%%",
