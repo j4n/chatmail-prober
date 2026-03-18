@@ -152,7 +152,7 @@ def _fresh_metrics(monkeypatch):
     return new
 
 
-def _fake_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None):
+def _fake_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=False):
     return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 
 
@@ -180,7 +180,7 @@ class TestRunRound:
         shutdown_event = threading.Event()
         call_count = 0
 
-        def _slow_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None):
+        def _slow_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=False):
             nonlocal call_count
             call_count += 1
             # After a couple of probes complete, trigger shutdown.
@@ -214,7 +214,7 @@ class TestRunRound:
         assert recorded < 9, f"Expected some pairs skipped, but all {recorded} recorded"
 
     def test_crashed_probe_records_error(self, tmp_path, monkeypatch, _fresh_metrics):
-        def _crashing_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None):
+        def _crashing_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=False):
             if source == "a.example" and dest == "b.example":
                 raise RuntimeError("boom")
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
@@ -241,7 +241,7 @@ class TestRunRound:
 
 class TestCheckRelaysAlive:
     def test_filters_dead_relays(self, tmp_path, monkeypatch, _fresh_metrics):
-        def _selective_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None):
+        def _selective_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=False):
             if source == "dead.example":
                 return ProbeResult(source, dest, error="connection refused")
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
@@ -287,7 +287,7 @@ class TestRunRoundExclude:
     def test_excludes_pairs(self, tmp_path, monkeypatch, _fresh_metrics):
         probed_pairs = []
 
-        def _tracking_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None):
+        def _tracking_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=False):
             probed_pairs.append((source, dest))
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 

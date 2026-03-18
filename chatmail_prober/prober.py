@@ -7,7 +7,10 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cmping import CMPingError, RelayContext, perform_ping, perform_ping_with_contexts
+from cmping import (
+    CMPingError, RelayContext, perform_direct_ping, perform_ping,
+    perform_ping_with_contexts,
+)
 
 
 def _ensure_venv_on_path():
@@ -101,11 +104,13 @@ def run_probe(
     timeout: float = 60.0,
     verbose: int = 0,
     relay_contexts: dict | None = None,
+    direct: bool = False,
 ) -> ProbeResult:
     """Run a single cmping probe between two relays.
 
     When relay_contexts is provided (dict of relay -> open RelayContext),
-    uses perform_ping_with_contexts() for shared RPC connections.
+    uses shared RPC connections.  When direct=True, uses 1:1 chat instead
+    of group (no join wait, true one-way measurement).
     Otherwise falls back to perform_ping() with accounts_dir.
 
     verbose levels (passed through to cmping):
@@ -124,16 +129,20 @@ def run_probe(
         verbose=cmping_verbose,
         numrecipients=1,
         reset=False,
+        direct=direct,
     )
 
     try:
-        if relay_contexts is not None:
+        if relay_contexts is not None and direct:
+            pinger = perform_direct_ping(args, relay_contexts,
+                                         timeout=timeout)
+        elif relay_contexts is not None:
             pinger = perform_ping_with_contexts(args, relay_contexts,
                                                 timeout=timeout)
         else:
             accounts_dir = Path(accounts_dir).expanduser()
             pinger = perform_ping(args, accounts_dir=accounts_dir,
-                                  timeout=timeout)
+                                  timeout=timeout, direct=direct)
         return ProbeResult(
             source=source,
             destination=dest,

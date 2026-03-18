@@ -182,6 +182,11 @@ def parse_args(argv=None):
         metavar="PATH",
         help='file of pairs to skip, one per line: "src->dst" (# comments allowed)',
     )
+    parser.add_argument(
+        "--direct",
+        action="store_true",
+        help="use 1:1 chat instead of group (no join wait, faster one-way measurement)",
+    )
     return parser.parse_args(argv)
 
 
@@ -340,10 +345,11 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None,
         for worker_id, executor in enumerate(executors):
             for src, dst in worker_pairs[worker_id]:
                 try:
+                    direct = getattr(args, "direct", False)
                     future = executor.submit(
                         run_probe, src, dst, args.count, args.ping_interval,
                         timeout=args.timeout, verbose=args.verbose,
-                        relay_contexts=relay_contexts,
+                        relay_contexts=relay_contexts, direct=direct,
                     )
                 except RuntimeError:
                     # Executor was shut down (e.g. by signal handler).
