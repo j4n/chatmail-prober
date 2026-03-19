@@ -102,7 +102,6 @@ class ProbeResult:
     loss: float = 100.0
     rtts_ms: list[float] = field(default_factory=list)
     account_setup_time: float = 0.0
-    group_join_time: float = 0.0
     message_time: float = 0.0
     error: str | None = None
 
@@ -163,7 +162,6 @@ def run_probe(
             loss=pinger.loss,
             rtts_ms=[rtt for _, rtt, _ in pinger.results],
             account_setup_time=pinger.account_setup_time,
-            group_join_time=pinger.group_join_time,
             message_time=pinger.message_time,
         )
     except CMPingError as e:

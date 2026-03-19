@@ -13,13 +13,12 @@ from chatmail_prober.prober import run_probe, ProbeResult, RelayPool, _cmping_ve
 class FakePinger:
     """Minimal stand-in for cmping.Pinger returned by perform_ping()."""
     def __init__(self, sent=3, received=3, loss=0.0, results=None,
-                 account_setup_time=0.5, group_join_time=0.3, message_time=2.0):
+                 account_setup_time=0.5, message_time=2.0):
         self.sent = sent
         self.received = received
         self.loss = loss
         self.results = results or [(0, 400.0, 0), (1, 500.0, 0), (2, 600.0, 0)]
         self.account_setup_time = account_setup_time
-        self.group_join_time = group_join_time
         self.message_time = message_time
 
 
@@ -48,11 +47,10 @@ class TestRunProbeSuccess:
     @patch("chatmail_prober.prober.perform_ping")
     def test_timing_data_propagated(self, mock_ping):
         mock_ping.return_value = FakePinger(
-            account_setup_time=1.1, group_join_time=2.2, message_time=3.3,
+            account_setup_time=1.1, message_time=3.3,
         )
         result = run_probe("a.test", "b.test", count=3, accounts_dir="/tmp/test-cache")
         assert result.account_setup_time == pytest.approx(1.1)
-        assert result.group_join_time == pytest.approx(2.2)
         assert result.message_time == pytest.approx(3.3)
 
     @patch("chatmail_prober.prober.perform_ping")
@@ -155,6 +153,20 @@ class TestRunProbeWithContexts:
 
         mock_ping.assert_called_once()
         assert result.sent == 3
+
+    @patch("chatmail_prober.prober.perform_ping")
+    def test_direct_mode_passed_to_perform_ping(self, mock_ping):
+        """direct=True is forwarded to perform_ping when no relay_contexts."""
+        mock_ping.return_value = FakePinger()
+        run_probe("a.test", "b.test", count=1, accounts_dir="/tmp/c", direct=True)
+        assert mock_ping.call_args.kwargs["direct"] is True
+
+    @patch("chatmail_prober.prober.perform_ping")
+    def test_group_mode_passed_to_perform_ping(self, mock_ping):
+        """direct=False is forwarded to perform_ping when no relay_contexts."""
+        mock_ping.return_value = FakePinger()
+        run_probe("a.test", "b.test", count=1, accounts_dir="/tmp/c", direct=False)
+        assert mock_ping.call_args.kwargs["direct"] is False
 
 
 class TestRelayPool:
