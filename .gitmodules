@@ -1,7 +1,3 @@
-[submodule "cmping-src"]
-	path = cmping-src
-	url = https://github.com/chatmail/cmping.git
-	branch = make-importable
 [submodule "esnet-matrix-panel"]
 	path = esnet-matrix-panel
 	url = https://github.com/j4n/esnet-matrix-panel.git
