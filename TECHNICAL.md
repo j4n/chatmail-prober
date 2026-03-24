@@ -15,10 +15,10 @@ round-trips and exports RTT histograms, loss ratios, and timing metrics.
 3. [Component Architecture](#3-component-architecture)
 4. [Probe Lifecycle](#4-probe-lifecycle)
 5. [Thread Model](#5-thread-model)
-6. [Worker Isolation](#6-worker-isolation)
+6. [RelayPool and Worker Isolation](#6-relaypool-and-worker-isolation)
 7. [Metrics Pipeline](#7-metrics-pipeline)
 8. [Shutdown Sequence](#8-shutdown-sequence)
-9. [cmping Library Internals](#9-cmping-library-internals)
+9. [Vendored Ping Internals](#9-vendored-ping-internals)
 10. [Grafana Dashboards](#10-grafana-dashboards)
 11. [Configuration Reference](#11-configuration-reference)
 12. [Development Guide](#12-development-guide)
@@ -42,10 +42,10 @@ graph LR
             __main__.py"]
         PROBE["run_probe
             prober.py"]
-        CMPING["perform_ping
-            cmping-src/cmping.py"]
+        PING["_perform_direct_ping
+            prober.py"]
         DCSERVER["deltachat-rpc-server
-            subprocess per probe"]
+            1 per relay via RelayPool"]
         METRICS["Prometheus Metrics
             metrics.py"]
         HTTP["HTTP /metrics
@@ -60,8 +60,8 @@ graph LR
     end
 
     MAIN -->|"N^2 pairs"| PROBE
-    PROBE --> CMPING
-    CMPING --> DCSERVER
+    PROBE --> PING
+    PING --> DCSERVER
     DCSERVER <-->|SMTP/IMAP| R1
     DCSERVER <-->|SMTP/IMAP| R2
     DCSERVER <-->|SMTP/IMAP| RN
@@ -85,15 +85,15 @@ from N relays, distributes them across W worker threads, and repeats every
 chatmail-prober/
 ├── chatmail_prober/         # Main package
 │   ├── __main__.py          # CLI, orchestration, signal handling
-│   ├── prober.py            # run_probe() wrapper + ProbeResult dataclass
+│   ├── prober.py            # Vendored ping logic, RelayPool, run_probe()
 │   ├── metrics.py           # Prometheus metric objects + update_metrics()
 │   └── output.py            # HTTP server + atomic textfile writer
-├── cmping-src/              # Git submodule: fork of cmping library
-│   └── cmping.py            # perform_ping(), Pinger, AccountMaker
+├── cmping-src/              # Git submodule: standalone cmping CLI (not a runtime dep)
+│   └── cmping.py            # Standalone CLI tool (own project)
 ├── tests/
 │   ├── test_main.py         # Orchestration unit tests (mocked probes)
 │   ├── test_metrics.py      # Metric computation unit tests
-│   ├── test_prober.py       # run_probe() unit tests (mocked perform_ping)
+│   ├── test_prober.py       # run_probe() unit tests (mocked _perform_direct_ping)
 │   ├── test_output.py       # Textfile writer unit tests
 │   ├── test_thread_leak.py  # Thread cleanup tests (no mocking, real threads)
 │   └── test_live.py         # Live integration tests (CMPING_LIVE_TEST=...)
@@ -118,21 +118,18 @@ graph TD
             run_round()
             main()"]
         PROBER["prober.py
-            ProbeResult
-            run_probe()"]
+            PingError
+            RelayContext / AccountMaker
+            Pinger (1:1 chat)
+            _perform_direct_ping()
+            RelayPool
+            ProbeResult / run_probe()"]
         METRICS["metrics.py
             update_metrics()
             CMPING_REGISTRY"]
         OUTPUT["output.py
             start_exporter_server()
             write_textfile()"]
-    end
-
-    subgraph cmping_src["cmping-src (editable install)"]
-        CMPING["cmping.py
-            perform_ping()
-            Pinger
-            AccountMaker"]
     end
 
     subgraph deltachat["deltachat-rpc-client (library)"]
@@ -142,11 +139,10 @@ graph TD
     end
 
     DCSERVER["deltachat-rpc-server
-        subprocess"]
+        subprocess (1 per relay)"]
 
     MAIN -->|"run_probe(src, dst, ...)"| PROBER
-    PROBER -->|"perform_ping(args, accounts_dir)"| CMPING
-    CMPING -->|"Rpc.__enter__()"| RPC
+    PROBER -->|"Rpc.__enter__()"| RPC
     RPC -->|"subprocess.Popen"| DCSERVER
     PROBER -->|ProbeResult| MAIN
     MAIN -->|update_metrics| METRICS
@@ -157,14 +153,17 @@ graph TD
 
 ### Key design decisions
 
-- **cmping is a library fork**: upstream cmping is a CLI tool that calls
-  `sys.exit()`. This fork replaces exits with `CMPingError` and adds a
-  `perform_ping()` API (accounts_dir, timeout, returns Pinger object).
-- **print is suppressed**: `prober.py` monkey-patches `builtins.print` to a
-  no-op at import time so cmping's stdout output is silenced in daemon mode.
-  Restored at `-vv` and above.
-- **One deltachat-rpc-server subprocess per probe**: each `perform_ping()`
-  call starts (and cleans up) its own `deltachat-rpc-server` process.
+- **Vendored direct-ping logic**: The minimal subset of cmping needed for
+  1:1 direct pinging is inlined in `prober.py`. This eliminates the cmping
+  package dependency, its CLI output suppression, group-mode complexity,
+  and verbose gating. Only structured logging remains.
+- **1:1 chat, not group**: Each probe creates a direct contact + chat between
+  sender and receiver. No group creation, no join wait, no multi-receiver
+  thread pool. This halves the thread count per probe and eliminates the
+  group-join phase entirely.
+- **One deltachat-rpc-server per relay**: A RelayPool opens one RPC context
+  per relay domain at the start of each round. All probes involving that
+  relay share its context. N relays = N subprocesses (not N^2).
 
 ---
 
@@ -176,43 +175,33 @@ One end-to-end probe between `src` and `dst`:
 sequenceDiagram
     participant W as Worker Thread
     participant RP as run_probe()
-    participant PP as perform_ping()
-    participant RPC1 as Rpc(src)
-    participant RPC2 as Rpc(dst)
+    participant PP as _perform_direct_ping()
+    participant RPC1 as RelayContext(src)
+    participant RPC2 as RelayContext(dst)
     participant DC1 as deltachat-rpc-server (src)
     participant DC2 as deltachat-rpc-server (dst)
     participant SM as SMTP/IMAP relays
 
     W->>RP: run_probe(src, dst, count, ...)
-    RP->>PP: perform_ping(args, accounts_dir, timeout)
+    RP->>PP: _perform_direct_ping(contexts, src, dst, ...)
 
     Note over PP,DC2: Phase 1 -- Account Setup (timed)
-    PP->>RPC1: Rpc.__enter__()
-    RPC1->>DC1: subprocess.Popen
-    PP->>RPC2: Rpc.__enter__()
-    RPC2->>DC2: subprocess.Popen
-    PP->>DC1: create/reuse sender account on src
-    PP->>DC2: create/reuse receiver account on dst
+    PP->>RPC1: maker.get_relay_account(src)
+    PP->>RPC2: maker.get_relay_account(dst)
     PP->>DC1: wait for IMAP_INBOX_IDLE
     PP->>DC2: wait for IMAP_INBOX_IDLE
 
-    Note over PP,DC2: Phase 2 -- Group Join (timed)
-    PP->>DC1: create group, add receiver, send init msg
-    DC1->>SM: SMTP -> src relay -> dst relay -> IMAP
-    SM->>DC2: deliver invitation
-    PP->>DC2: wait for receiver to join group
-
-    Note over PP,DC2: Phase 3 -- Ping/Pong (timed)
-    PP->>DC1: Pinger._send_thread starts
+    Note over PP,DC2: Phase 2 -- Ping/Pong (timed)
+    PP->>PP: Pinger(sender, receiver, count, interval)
+    PP->>DC1: create_contact + create_chat (1:1)
+    PP->>DC1: _send_thread starts
     loop count times
         DC1->>SM: send "tx_id timestamp seq"
         SM->>DC2: deliver
-        DC2->>PP: receiver_thread: INCOMING_MSG event
+        DC2->>PP: receiver event queue: INCOMING_MSG
         PP->>PP: RTT = (now - timestamp) * 1000
     end
 
-    PP->>RPC1: Rpc.__exit__() -> terminate DC1
-    PP->>RPC2: Rpc.__exit__() -> terminate DC2
     PP-->>RP: Pinger (sent, received, loss, results[])
     RP-->>W: ProbeResult
 ```
@@ -231,7 +220,6 @@ RTT is computed by the receiver: `(time.time() - float(parts[1])) * 1000` ms.
 | Field | Measures |
 |---|---|
 | `account_setup_time` | Rpc start + IMAP_INBOX_IDLE wait |
-| `group_join_time` | Group creation + receiver acceptance |
 | `message_time` | Full send+receive loop |
 
 ---
@@ -261,11 +249,7 @@ graph TD
             daemon
             sends N pings
             exits at deadline"]
-        RT0["receiver_thread
-            daemon
-            polls account_queue
-            checks stop_event"]
-        subgraph RPC0["per Rpc context  (one per relay: x2 for cross, x1 for self)"]
+        subgraph RPC0["shared RelayContext (1 per relay via RelayPool)"]
             EV0["events_thread
                 daemon"]
             RW0["reader_thread
@@ -278,11 +262,7 @@ graph TD
             daemon
             sends N pings
             exits at deadline"]
-        RT1["receiver_thread
-            daemon
-            polls account_queue
-            checks stop_event"]
-        subgraph RPC1["per Rpc context  (one per relay: x2 for cross, x1 for self)"]
+        subgraph RPC1["shared RelayContext (1 per relay via RelayPool)"]
             EV1["events_thread
                 daemon"]
             RW1["reader_thread
@@ -290,8 +270,8 @@ graph TD
         end
     end
 
-    W0 --> ST0 & RT0 & RPC0
-    W1 --> ST1 & RT1 & RPC1
+    W0 --> ST0 & RPC0
+    W1 --> ST1 & RPC1
 ```
 
 ### Thread lifetimes
@@ -299,18 +279,22 @@ graph TD
 | Thread | Created by | Lifetime | Cleanup |
 |---|---|---|---|
 | Worker threads | `ThreadPoolExecutor(max_workers=1)` | Entire process | `executor.shutdown()` |
-| `_send_thread` | `Pinger.__init__` | Until all pings sent (or deadline) | `join(timeout=2.0)` in `perform_ping` |
-| `receiver_thread` | `Pinger.receive()` | Until `stop_event.set()` | `finally: stop_event.set(); join(timeout=2.0)` |
+| `_send_thread` | `Pinger.__init__` | Until all pings sent (or deadline) | `join(timeout=2.0)` in `_perform_direct_ping` |
 | `events_thread` | `Rpc.start()` | Until `Rpc.close()` | `Rpc.close()` joins it |
 | `reader_thread` | `Rpc.start()` | Until stdout closed | `Rpc.close()` joins it |
 | `writer_thread` | `Rpc.start()` | Until stdin closed | `Rpc.close()` joins it |
 
+The vendored Pinger uses a single-receiver inline loop in `receive()` --
+no receiver thread pool. This eliminates the thread leak that previously
+occurred when receiver threads blocked on `queue.get()` without a timeout.
+
 ---
 
-## 6. Worker Isolation
+## 6. RelayPool and Worker Isolation
 
-Pairs are distributed **round-robin** across W workers so each worker
-processes its pairs sequentially:
+A RelayPool opens one RelayContext per relay domain at the start of each
+round. All probes share these contexts. Pairs are distributed **round-robin**
+across W workers so each worker processes its pairs sequentially:
 
 ```mermaid
 graph LR
@@ -327,36 +311,44 @@ graph LR
         P8["pair 8: C->C"]
     end
 
-    subgraph W0["Worker-0  cache/worker-0/"]
+    subgraph W0["Worker-0"]
         P0 --> P3 --> P6
     end
-    subgraph W1["Worker-1  cache/worker-1/"]
+    subgraph W1["Worker-1"]
         P1 --> P4 --> P7
     end
-    subgraph W2["Worker-2  cache/worker-2/"]
+    subgraph W2["Worker-2"]
         P2 --> P5 --> P8
     end
-```
 
-Why sequential within a worker? `deltachat-rpc-server` uses SQLite and holds
-an exclusive lock on `accounts.lock`.  If two probes for the same relay ran
-concurrently under the same accounts_dir, the second would fail with a lock
-error.  Per-worker directories ensure each `Rpc` context sees only its own
-accounts.
+    subgraph Pool["RelayPool (shared, read-only after open_all)"]
+        CA["RelayContext A"]
+        CB["RelayContext B"]
+        CC["RelayContext C"]
+    end
+
+    W0 -.-> CA & CB & CC
+    W1 -.-> CA & CB & CC
+    W2 -.-> CA & CB & CC
+```
 
 ### Account directory layout
 
 ```
 ~/.cache/chatmail-prober/
-├── worker-0/
-│   ├── relay-a.example/     # Rpc accounts_dir for relay-a
-│   │   ├── accounts.toml
-│   │   └── ...
-│   └── relay-b.example/
-├── worker-1/
+├── relay-a.example/         # RelayContext accounts_dir for relay-a
+│   ├── accounts.toml
 │   └── ...
+├── relay-b.example/
+├── relay-c.example/
 └── alive-check/             # used only during pre-flight alive check
+    ├── relay-a.example/
+    └── ...
 ```
+
+Each relay gets its own `deltachat-rpc-server` subprocess and accounts
+directory. The RelayPool manages their lifecycle (open, close, reopen on
+RPC crash).
 
 ---
 
@@ -444,7 +436,7 @@ cardinality from growing unbounded when relays are removed.
 
 Two registries exist to avoid double-counting process metrics:
 
-- `CMPING_REGISTRY`: only cmping metrics -- used for textfile output (no
+- `CMPING_REGISTRY`: only probe metrics -- used for textfile output (no
   `process_*` or `python_*` collectors that node_exporter would also expose)
 - default `REGISTRY`: everything -- used by the HTTP endpoint
 
@@ -478,22 +470,30 @@ The 5-second timer in the signal handler fires `os._exit(0)` as a backstop if
 the main thread stays stuck in `as_completed()` after all futures are cancelled.
 
 SIGUSR2 cycles through verbosity levels at runtime without restarting:
-quiet (WARNING only) -> normal (INFO) -> -v (DEBUG) -> -vv (DEBUG + cmping output).
+quiet (WARNING only) -> normal (INFO) -> debug (DEBUG).
 
 ---
 
-## 9. cmping Library Internals
+## 9. Vendored Ping Internals
+
+The direct-ping logic in `prober.py` is vendored from cmping and simplified
+for the prober's single-receiver, 1:1 chat use case.
 
 ```mermaid
 classDiagram
-    class perform_ping {
-        +args: Namespace
-        +accounts_dir: Path
+    class _perform_direct_ping {
+        +relay_contexts: dict
+        +source: str
+        +dest: str
+        +count: int
+        +interval: float
         +timeout: float
         ---
-        Creates RelayContext per relay
-        Orchestrates 3 timed phases
-        Cleans up RPC in finally
+        Gets accounts from makers
+        Waits for online
+        Creates Pinger
+        Consumes receive()
+        Returns Pinger with results
     }
 
     class RelayContext {
@@ -504,7 +504,6 @@ classDiagram
 
     class AccountMaker {
         +dc: DeltaChat
-        +verbose: int
         +get_relay_account(domain) Account
         +wait_all_online(timeout)
     }
@@ -515,7 +514,6 @@ classDiagram
         +loss: float
         +results: list
         +account_setup_time: float
-        +group_join_time: float
         +message_time: float
         +deadline: float
         ---
@@ -528,61 +526,44 @@ classDiagram
         +event_queues: dict
         +start()
         +close()
-        +wait_for_event(account_id) dict
         +get_queue(account_id) Queue
     }
 
-    perform_ping --> RelayContext : creates per relay
+    _perform_direct_ping --> RelayContext : uses from pool
     RelayContext --> AccountMaker
     RelayContext --> Rpc
-    perform_ping --> Pinger : creates for phase 3
-    Pinger --> Rpc : get_queue() for receiver threads
+    _perform_direct_ping --> Pinger : creates for message phase
+    Pinger --> Rpc : get_queue() for inline receive loop
 ```
 
-### perform_ping phases
+### _perform_direct_ping phases
 
 ```mermaid
 flowchart TD
-    A[perform_ping called] --> B
+    A[_perform_direct_ping called] --> B
 
     subgraph B["Phase 1: Account Setup"]
-        B1["Rpc.__enter__ per relay
-            spawns deltachat-rpc-server"]
-        B2["create/reuse accounts
-            via AccountMaker"]
-        B3["wait_profiles_online_multi
+        B1["get_relay_account per relay
+            (create or reuse)"]
+        B2["wait_all_online
             block until IMAP_INBOX_IDLE"]
-        B1 --> B2 --> B3
+        B1 --> B2
     end
 
-    B --> C
+    B --> D
 
-    subgraph C["Phase 2: Group Join"]
-        C1["sender creates group
-            adds receiver accounts"]
-        C2["send init message
-            promotes group"]
-        C3["wait_for_receivers_to_join
-            per-receiver threads + spinner"]
-        C1 --> C2 --> C3
-    end
-
-    C --> D
-
-    subgraph D["Phase 3: Ping/Pong"]
-        D1["Pinger.__init__
-            start _send_thread
-            set deadline"]
-        D2["Pinger.receive
-            start receiver_threads
-            yield RTT measurements"]
-        D3["pinger._send_thread.join timeout=2s"]
+    subgraph D["Phase 2: Ping/Pong"]
+        D1["Pinger(sender, receiver, count, interval)
+            creates 1:1 chat
+            starts _send_thread"]
+        D2["Pinger.receive()
+            inline event loop on receiver queue
+            yields (seq, ms_duration)"]
+        D3["_send_thread.join(timeout=2s)"]
         D1 --> D2 --> D3
     end
 
-    D --> E["finally: Rpc.__exit__ per relay
-        terminate deltachat-rpc-server"]
-    E --> F[return Pinger]
+    D --> F[return Pinger]
 ```
 
 ---
@@ -632,12 +613,12 @@ chatmail-prober [relays_file ...] [options]
 | `--ping-interval` | `0.1` | Seconds between individual pings within a probe |
 | `--timeout` | `60` | Per-pair receive timeout in seconds |
 | `--workers` | `5` | Concurrent worker threads |
-| `--cache-dir` | `~/.cache/chatmail-prober` | Root for per-worker account dirs |
+| `--cache-dir` | `~/.cache/chatmail-prober` | Root for per-relay account dirs |
 | `--exclude PATH` | `None` | File of pairs to skip: `src->dst` per line |
 | `--once` | false | Run one round then exit (useful with --textfile in cron) |
 | `--scan` | false | Self-probe all relays in parallel, print ranked by RTT, exit |
 | `--top N` | `10` | Relays to highlight in --scan output |
-| `-v` / `-vv` / `-vvv` | 0 | Verbosity: debug / cmping errors / cmping events |
+| `-v` | 0 | Debug logging |
 | `-q` | false | Quiet: suppress progress, show only warnings/errors |
 
 At least one of `relays` or `--auto-fetch` must be provided.  When both are
@@ -669,7 +650,7 @@ tarpit.fun -> broken-relay.example
 ### Setup
 
 ```bash
-uv sync --dev      # creates .venv, installs cmping-src editable + pytest
+uv sync --dev      # creates .venv, installs deps + pytest
 # or:
 make install-dev
 ```
@@ -691,21 +672,10 @@ CMPING_LIVE_TEST=nine.testrun.org,mehl.cloud uv run python -m pytest tests/test_
 |---|---|---|
 | `test_main.py` | No | `run_probe` monkeypatched |
 | `test_metrics.py` | No | Fresh prometheus registry |
-| `test_prober.py` | No | `perform_ping` monkeypatched |
+| `test_prober.py` | No | `_perform_direct_ping` monkeypatched |
 | `test_output.py` | No | None |
 | `test_thread_leak.py` | No | None -- real threads + queues |
 | `test_live.py` | Yes | None -- full stack |
-
-### cmping-src changes
-
-Changes to `cmping-src/` must be PR-quality:
-- Preserve existing CLI behavior exactly
-- Only add new opt-in functionality
-- Keep comments minimal and non-rephrased
-- Commit inside the submodule first, then update the parent pointer
-
-cmping is an editable install (`pyproject.toml: cmping = { path = "cmping-src", editable = true }`),
-so changes to `cmping-src/cmping.py` are immediately reflected without reinstall.
 
 ### Adding a metric
 
@@ -723,7 +693,7 @@ cat /proc/<pid>/status | grep Threads   # should stay near constant across round
 kill -USR1 <pid>
 
 # Verbose probe output for one round
-chatmail-prober relays.txt --once -vvv 2>&1 | head -200
+chatmail-prober relays.txt --once -v 2>&1 | head -200
 ```
 
 ---
@@ -747,16 +717,14 @@ The round time is roughly `ceil(N^2 / workers) * avg_probe_time`.
 on every relay and excludes dead ones from the matrix for that round.
 Dead relays appear in `cmping_send_errors_total` and `cmping_probe_success=0`.
 
-#### Fixed
-
 ### MemoryError / "can't start new thread"
 
 **Symptom**: `MemoryError` in `threading._after_fork`, followed by
 `can't start new thread` errors mid-round.
 
-**Root cause**: Thread accumulation. Either:
-- Receiver threads not exiting (fixed: was `queue.get()` with no timeout)
-- Overall heap growth across many rounds (GC every 50 pairs is in place)
+**Root cause**: Thread accumulation. The vendored Pinger uses an inline
+receive loop (no thread pool), eliminating the primary historical cause
+of thread leaks. GC runs every 50 pairs as a secondary safeguard.
 
 **Diagnosis**:
 ```bash
@@ -764,7 +732,6 @@ cat /proc/<pid>/status | grep Threads   # should stay near constant
 ```
 
 **Mitigation**: Restart the process if thread count grows unexpectedly.
-The fix in `cmping.py:Pinger.receive()` addresses the primary cause.
 
 ### deltachat-rpc-server orphans after crash
 
@@ -777,7 +744,16 @@ for lock in cache_dir.rglob("accounts.lock"):
     lock.unlink(missing_ok=True)
 ```
 
-### File descriptor exhaustion (fixed)
+### RPC crash mid-round
+
+**Symptom**: Probes fail with BrokenPipe/ConnectionReset/EOFError errors.
+
+**Handling**: When `run_round()` detects an RPC-level error keyword in a
+probe's error string, it calls `pool.reopen(relay)` to close the dead
+context and start a fresh one. Subsequent probes for that relay use the
+new context.
+
+### File descriptor exhaustion
 
 **Symptom**: `OSError: [Errno 24] Too many open files` from deltachat or IMAP.
 
@@ -816,7 +792,7 @@ sudo useradd -r -s /usr/sbin/nologin -d /opt/chatmail-prober chatmail-prober
 | `/opt/chatmail-prober/` | Home dir for the service user; uv installs to `.local/bin/uv` here |
 | `/opt/chatmail-prober/chatmail-prober/` | Git repo (`WorkingDirectory`) |
 | `/var/lib/chatmail-prober/relays.txt` | Relay list cache written by `--auto-fetch` on each startup |
-| `/var/lib/chatmail-prober/` | Per-worker account cache and state (created by `StateDirectory=`) |
+| `/var/lib/chatmail-prober/` | Per-relay account cache and state (created by `StateDirectory=`) |
 | `/var/tmp/chatmail-prober.prom` | Textfile written atomically by the prober |
 | `/var/lib/prometheus/node-exporter/chatmail-prober.prom` | Destination for node-exporter |
 
@@ -829,7 +805,7 @@ sudo useradd -r -s /usr/sbin/nologin -d /opt/chatmail-prober chatmail-prober
 sudo chown chatmail-prober:chatmail-prober /opt/chatmail-prober
 
 # Clone the repo and install dependencies as the service user
-sudo -u chatmail-prober git clone --recurse-submodules \
+sudo -u chatmail-prober git clone \
     https://github.com/chatmail/chatmail-prober \
     /opt/chatmail-prober/chatmail-prober
 sudo -u chatmail-prober sh -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'

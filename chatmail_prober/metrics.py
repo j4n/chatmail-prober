@@ -134,7 +134,7 @@ def update_metrics(result):
         return
 
     # Derive both success and loss from sent/received (single source of truth)
-    # rather than mixing result.loss (from cmping) with our own computation.
+    # rather than mixing result.loss with our own computation.
     if result.sent > 0:
         loss_ratio = 1.0 - result.received / result.sent
         probe_success.labels(**labels).set(1 if loss_ratio == 0.0 else 0)

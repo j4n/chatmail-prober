@@ -5,11 +5,9 @@ description = "Smokeping-style Prometheus exporter for chatmail relay interopera
 requires-python = ">=3.10"
 dependencies = [
     "prometheus-client>=0.20",
-    "cmping",
+    "deltachat-rpc-client>=2.24.0",
+    "deltachat-rpc-server>=2.24.0",
 ]
-
-[tool.uv.sources]
-cmping = { path = "cmping-src", editable = true }
 
 [project.scripts]
 chatmail-prober = "chatmail_prober.__main__:main"

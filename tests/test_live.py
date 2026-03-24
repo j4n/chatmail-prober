@@ -41,28 +41,14 @@ def _cross_pair_ids():
 
 @live
 class TestLiveSelfLoop:
-    """Probe each relay to itself in both direct and group mode."""
+    """Probe each relay to itself."""
 
     @pytest.mark.parametrize("relay", RELAYS, ids=_self_loop_ids())
-    def test_direct(self, relay, tmp_path):
+    def test_self_loop(self, relay, tmp_path):
         result = run_probe(relay, relay, count=3,
-                           accounts_dir=str(tmp_path / "cache"), direct=True)
+                           accounts_dir=str(tmp_path / "cache"))
 
-        assert result.error is None, f"{relay} direct self-loop failed: {result.error}"
-        assert result.sent == 3
-        assert result.received > 0
-        assert result.loss < 100.0
-        assert len(result.rtts_ms) == result.received
-        assert all(rtt > 0 for rtt in result.rtts_ms)
-        assert result.account_setup_time > 0
-        assert result.message_time > 0
-
-    @pytest.mark.parametrize("relay", RELAYS, ids=_self_loop_ids())
-    def test_group(self, relay, tmp_path):
-        result = run_probe(relay, relay, count=3,
-                           accounts_dir=str(tmp_path / "cache"), direct=False)
-
-        assert result.error is None, f"{relay} group self-loop failed: {result.error}"
+        assert result.error is None, f"{relay} self-loop failed: {result.error}"
         assert result.sent == 3
         assert result.received > 0
         assert result.loss < 100.0
@@ -75,33 +61,18 @@ class TestLiveSelfLoop:
 @live
 @pytest.mark.skipif(len(RELAYS) < 2, reason="need >=2 relays for cross-relay tests")
 class TestLiveCrossRelay:
-    """Probe all ordered cross-relay pairs in both modes."""
+    """Probe all ordered cross-relay pairs."""
 
     @pytest.mark.parametrize(
         "src,dst",
         [(s, d) for s in RELAYS for d in RELAYS if s != d],
         ids=_cross_pair_ids(),
     )
-    def test_direct(self, src, dst, tmp_path):
+    def test_cross_relay(self, src, dst, tmp_path):
         result = run_probe(src, dst, count=2,
-                           accounts_dir=str(tmp_path / "cache"), direct=True)
+                           accounts_dir=str(tmp_path / "cache"))
 
-        assert result.error is None, f"{src} -> {dst} direct failed: {result.error}"
-        assert result.sent == 2
-        assert result.received > 0
-        assert len(result.rtts_ms) == result.received
-        assert all(rtt > 0 for rtt in result.rtts_ms)
-
-    @pytest.mark.parametrize(
-        "src,dst",
-        [(s, d) for s in RELAYS for d in RELAYS if s != d],
-        ids=_cross_pair_ids(),
-    )
-    def test_group(self, src, dst, tmp_path):
-        result = run_probe(src, dst, count=2,
-                           accounts_dir=str(tmp_path / "cache"), direct=False)
-
-        assert result.error is None, f"{src} -> {dst} group failed: {result.error}"
+        assert result.error is None, f"{src} -> {dst} failed: {result.error}"
         assert result.sent == 2
         assert result.received > 0
         assert len(result.rtts_ms) == result.received

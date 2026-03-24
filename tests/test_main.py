@@ -1,7 +1,6 @@
 """Tests for config parsing, CLI args, pair generation, and orchestration."""
 
 import argparse
-import os
 import threading
 import time
 
@@ -128,7 +127,7 @@ class TestPairGeneration:
 def _make_args(tmp_path, workers=2):
     return argparse.Namespace(
         count=1, ping_interval=0.1, timeout=10, workers=workers,
-        cache_dir=str(tmp_path / "cache"), verbose=0, direct=True,
+        cache_dir=str(tmp_path / "cache"), verbose=0,
     )
 
 
@@ -152,7 +151,7 @@ def _fresh_metrics(monkeypatch):
     return new
 
 
-def _fake_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=True):
+def _fake_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, relay_contexts=None):
     return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 
 
@@ -197,7 +196,7 @@ class TestRunRound:
         shutdown_event = threading.Event()
         call_count = 0
 
-        def _slow_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=True):
+        def _slow_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, relay_contexts=None):
             nonlocal call_count
             call_count += 1
             # After a couple of probes complete, trigger shutdown.
@@ -233,7 +232,7 @@ class TestRunRound:
     def test_crashed_probe_records_error(self, tmp_path, monkeypatch, _fresh_metrics):
         monkeypatch.setattr("chatmail_prober.__main__.RelayPool", _FakePool)
 
-        def _crashing_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=True):
+        def _crashing_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, relay_contexts=None):
             if source == "a.example" and dest == "b.example":
                 raise RuntimeError("boom")
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
@@ -260,7 +259,7 @@ class TestRunRound:
 
 class TestCheckRelaysAlive:
     def test_filters_dead_relays(self, tmp_path, monkeypatch, _fresh_metrics):
-        def _selective_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=False):
+        def _selective_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, relay_contexts=None):
             if source == "dead.example":
                 return ProbeResult(source, dest, error="connection refused")
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
@@ -307,7 +306,7 @@ class TestRunRoundExclude:
         monkeypatch.setattr("chatmail_prober.__main__.RelayPool", _FakePool)
         probed_pairs = []
 
-        def _tracking_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, verbose=0, relay_contexts=None, direct=True):
+        def _tracking_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, relay_contexts=None):
             probed_pairs.append((source, dest))
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 

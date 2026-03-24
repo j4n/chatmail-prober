@@ -2,9 +2,9 @@
 
 Smokeping-style Prometheus exporter for [chatmail](https://chatmail.at) relay interoperability monitoring.
 
-Periodically probes all pairs of configured chatmail relays using
-[cmping](https://github.com/chatmail/cmping) and exposes round-trip time
-histograms, counters, and success gauges as Prometheus metrics.
+Periodically probes all pairs of configured chatmail relays using direct
+1:1 Delta Chat messages and exposes round-trip time histograms, counters,
+and success gauges as Prometheus metrics.
 
 Inspired by:
 - https://oss.oetiker.ch/smokeping/
@@ -13,7 +13,7 @@ Inspired by:
 ## Quick start
 
 ```bash
-git clone --recurse-submodules <repo-url>
+git clone <repo-url>
 cd chatmail-prober
 
 # Create a relay list (see https://chatmail.at/relays for public relays)
@@ -47,7 +47,7 @@ And look at `curl http://localhost:9740/metrics` to see the metrics.
 ## CLI options
 
 ```
---auto-fetch PATH    fetch relay list from https://chatmail.at/relays and write 
+--auto-fetch PATH    fetch relay list from https://chatmail.at/relays and write
                      to PATH before starting
 RELAYS               Relay list file(s), one domain per line (positional arg)
 --scan               Self-probe all relays, print ranked by RTT, then exit
@@ -59,12 +59,10 @@ RELAYS               Relay list file(s), one domain per line (positional arg)
 --ping-interval S    Seconds between pings within a probe (default: 0.1)
 --timeout SECS       Per-pair receive timeout in seconds (default: 60)
 --workers N          Max concurrent probe threads (default: 5)
---cache-dir PATH     Base dir for per-worker account directories (default: ~/.cache/chatmail-prober)
+--cache-dir PATH     Base dir for per-relay account directories (default: ~/.cache/chatmail-prober)
 --exclude PATH       File of pairs to skip: "src->dst" per line (# comments)
 --once               Run one round then exit
--v                   Debug messages from chatmail_prober
--vv                  Also show cmping errors and stats
--vvv                 Also show all deltachat events (very noisy)
+-v                   Debug logging
 -q / --quiet         Suppress progress output (only show warnings/errors)
 ```
 
@@ -73,7 +71,7 @@ where you only want errors.
 
 A SIGUSR1 signal (`kill -USR1`) stops the service after finishing the current probing round.
 
-A SIGUSR2 signal (`kill -USR2`) cycles verbosity: quiet -> normal -> -v -> -vv -> quiet.
+A SIGUSR2 signal (`kill -USR2`) cycles verbosity: quiet -> normal -> debug -> quiet.
 
 ## Metrics
 
@@ -100,17 +98,17 @@ instead of stale values from the previous successful round.
 ## Operation Overview
 
 For N relays, chatmail-prober tests all N^2 ordered pairs (including
-self-loops). Each pair runs `cmping` with a configurable number of pings,
-producing individual round-trip time measurements visualized in two Grafana
-dashboards.
+self-loops). Each pair sends a configurable number of direct 1:1 pings
+via deltachat-rpc-client, producing individual round-trip time measurements
+visualized in two Grafana dashboards.
 
-### Per-worker account directories
+### Per-relay account directories
 
-Accounts are organised by worker, not by pair. With W workers and N relays there are
-W*N account directories instead of 2*N^2. At 30 relays and 10 workers that is 300
-accounts vs 1800. Each worker runs one thread that processes its assigned pairs
-sequentially, so its account directories are never accessed concurrently to avoid
-deltachat-rpc-server database lock contention without needing semaphores.
+Accounts are organised by relay domain, not by pair or worker. A RelayPool
+opens one RelayContext (one deltachat-rpc-server subprocess) per relay at the
+start of each round. All probes involving that relay share its RPC context.
+With N relays there are N account directories and N rpc-server processes,
+regardless of the number of workers.
 
 ### Pre-flight alive check and --scan
 
@@ -132,7 +130,7 @@ one round-trip, making large matrix runs practical.
 
 ### systemd
 
-Unit files are in `systemd/`:  
+Unit files are in `systemd/`:
 - `chatmail-prober.service`: The prober,  writes metrics to `/var/tmp/chatmail-prober.prom`
 - `chatmail-prober-prom-copy.path`: a path-activated trigger for
 - `chatmail-prober-prom-copy.service`: a oneshot service that copies the file into node-exporter's textfile directory on each write.
@@ -145,7 +143,7 @@ sudo useradd -r -s /usr/sbin/nologin -d /opt/chatmail-prober chatmail-prober
 sudo chown chatmail-prober:chatmail-prober /opt/chatmail-prober
 
 # 2. Clone the repo and install dependencies as the service user
-sudo -u chatmail-prober git clone --recurse-submodules \
+sudo -u chatmail-prober git clone \
     https://github.com/j4n/chatmail-prober \
     /opt/chatmail-prober/chatmail-prober
 sudo -u chatmail-prober sh -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
@@ -215,6 +213,10 @@ make test
 CMPING_LIVE_TEST=nine.testrun.org,mailchat.pl .venv/bin/pytest tests/test_live.py -v
 ```
 
-## cmping dependency
+## cmping-src submodule
 
-chatmail-prober depends on a [fork of cmping](https://github.com/chatmail/cmping) (branch `make-importable`) that adds library-friendly APIs:
+The `cmping-src/` directory is a git submodule containing the standalone
+[cmping](https://github.com/chatmail/cmping) CLI tool. chatmail-prober
+no longer depends on it at runtime -- the needed direct-ping logic has been
+vendored into `chatmail_prober/prober.py`. The submodule remains in the repo
+as cmping is its own project.

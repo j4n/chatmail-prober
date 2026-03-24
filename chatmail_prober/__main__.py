@@ -1,8 +1,7 @@
 """chatmail-prober: Smokeping-style Prometheus exporter for chatmail relay interop.
 
-Periodically probes all pairs of configured chatmail relays using cmping
-and exposes round-trip time histograms, counters, and success gauges
-as Prometheus metrics.
+Periodically probes all pairs of configured chatmail relays and exposes
+round-trip time histograms, counters, and success gauges as Prometheus metrics.
 """
 
 import argparse
@@ -22,7 +21,7 @@ from .metrics import (
     update_metrics,
 )
 from .output import start_exporter_server, write_textfile
-from .prober import ProbeResult, RelayPool, run_probe, _cmping_verbose
+from .prober import ProbeResult, RelayPool, run_probe
 
 log = logging.getLogger("chatmail_prober")
 
@@ -152,7 +151,7 @@ def parse_args(argv=None):
         "-v", "--verbose",
         action="count",
         default=0,
-        help="increase verbosity: -v debug, -vv cmping errors/stats, -vvv cmping events",
+        help="increase verbosity (-v = debug logging)",
     )
     parser.add_argument(
         "-q", "--quiet",
@@ -182,13 +181,6 @@ def parse_args(argv=None):
         metavar="PATH",
         help='file of pairs to skip, one per line: "src->dst" (# comments allowed)',
     )
-    parser.add_argument(
-        "--no-direct",
-        dest="direct",
-        action="store_false",
-        default=True,
-        help="use group chat instead of 1:1 (slower, requires join wait)",
-    )
     return parser.parse_args(argv)
 
 
@@ -201,7 +193,7 @@ def scan_relays(relays, args):
     with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
         futures = {
             pool.submit(run_probe, r, r, args.count, args.ping_interval,
-                        str(cache_dir / "scan" / r), args.timeout, args.verbose): r
+                        str(cache_dir / "scan" / r), args.timeout): r
             for r in relays
         }
         for future in as_completed(futures):
@@ -269,7 +261,7 @@ def _kill_stale_rpc_servers(cache_dir, graceful=True):
 
 
 def check_relays_alive(relays, args):
-    """Run a single self-probe (relay→itself, count=1) for each relay in parallel.
+    """Run a single self-probe (relay->itself, count=1) for each relay in parallel.
 
     Returns the list of relays that succeeded, in original order.
     Dead relays are logged as warnings and excluded from the matrix.
@@ -280,7 +272,7 @@ def check_relays_alive(relays, args):
     with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
         futures = {
             pool.submit(run_probe, r, r, 1, args.ping_interval,
-                        str(cache_dir / "alive-check" / r), args.timeout, args.verbose): r
+                        str(cache_dir / "alive-check" / r), args.timeout): r
             for r in relays
         }
         dead = set()
@@ -332,7 +324,7 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None,
     round_start = time.time()
 
     cache_dir = Path(args.cache_dir).expanduser()
-    pool = RelayPool(cache_dir, verbose=_cmping_verbose(args.verbose))
+    pool = RelayPool(cache_dir)
 
     try:
         pool.open_all(relays)
@@ -347,11 +339,10 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None,
         for worker_id, executor in enumerate(executors):
             for src, dst in worker_pairs[worker_id]:
                 try:
-                    direct = args.direct
                     future = executor.submit(
                         run_probe, src, dst, args.count, args.ping_interval,
-                        timeout=args.timeout, verbose=args.verbose,
-                        relay_contexts=relay_contexts, direct=direct,
+                        timeout=args.timeout,
+                        relay_contexts=relay_contexts,
                     )
                 except RuntimeError:
                     # Executor was shut down (e.g. by signal handler).
@@ -409,7 +400,7 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None,
 def main(argv=None):
     args = parse_args(argv)
 
-    # Root logger stays at WARNING — prevents deltachat-rpc-client's internal
+    # Root logger stays at WARNING -- prevents deltachat-rpc-client's internal
     # event logging from flooding the output when -v is used.
     logging.basicConfig(
         level=logging.WARNING,
@@ -423,10 +414,6 @@ def main(argv=None):
         log.setLevel(logging.DEBUG)
     else:
         log.setLevel(logging.INFO)
-
-    # At -vv or higher, lower cmping's log level so its debug output is visible.
-    if args.verbose >= 2:
-        logging.getLogger("cmping").setLevel(logging.DEBUG)
 
     # Raise the fd soft limit to the hard limit so large relay matrices
     # don't hit the default 1024 cap when deltachat-rpc-server opens many DBs.
@@ -503,21 +490,17 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGUSR1, _handle_usr1)
 
-    # Verbosity cycle: quiet -> normal -> -v -> -vv -> quiet ...
-    _cmping_log = logging.getLogger("cmping")
+    # Verbosity cycle: quiet -> normal -> debug -> quiet ...
     _verbosity_levels = [
-        # (log_level, cmping_level, args_verbose, label)
-        (logging.WARNING, logging.WARNING, 0, "quiet"),
-        (logging.INFO,    logging.INFO,    0, "normal"),
-        (logging.DEBUG,   logging.INFO,    1, "-v (debug)"),
-        (logging.DEBUG,   logging.DEBUG,   2, "-vv (debug + cmping debug)"),
+        # (log_level, label)
+        (logging.WARNING, "quiet"),
+        (logging.INFO,    "normal"),
+        (logging.DEBUG,   "debug"),
     ]
 
     # Determine starting position in the cycle from startup flags.
     if args.quiet:
         _verbosity_idx = 0
-    elif args.verbose >= 2:
-        _verbosity_idx = 3
     elif args.verbose >= 1:
         _verbosity_idx = 2
     else:
@@ -526,10 +509,8 @@ def main(argv=None):
     def _handle_usr2(signum, frame):
         nonlocal _verbosity_idx
         _verbosity_idx = (_verbosity_idx + 1) % len(_verbosity_levels)
-        level, cmping_level, verbose, label = _verbosity_levels[_verbosity_idx]
+        level, label = _verbosity_levels[_verbosity_idx]
         log.setLevel(level)
-        _cmping_log.setLevel(cmping_level)
-        args.verbose = verbose
         # Log at WARNING so it's visible regardless of current level.
         log.warning("SIGUSR2: verbosity -> %s", label)
 
