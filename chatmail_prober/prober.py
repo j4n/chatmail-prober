@@ -196,17 +196,9 @@ class AccountMaker:
         else:
             account = self.dc.add_account()
             qr_url = create_qr_url(domain)
-            try:
-                account.set_config_from_qr(qr_url)
-            except Exception as e:
-                log.error("Failed to configure profile on %s: %s", domain, e)
-                raise
+            account.set_config_from_qr(qr_url)
 
-        try:
-            self._add_online(account)
-        except Exception as e:
-            log.error("Failed to bring profile online for %s: %s", domain, e)
-            raise
+        self._add_online(account)
 
         return account, False
 
@@ -237,7 +229,7 @@ class Pinger:
         contact = sender.create_contact(receiver)
         self.chat = contact.create_chat()
 
-        log.info(
+        log.debug(
             "PING %s -> %s count=%d interval=%ss",
             self.relay1, self.relay2, count, interval,
         )
@@ -513,7 +505,7 @@ def run_probe(
             message_time=pinger.message_time,
         )
     except PingError as e:
-        log.warning("Probe %s -> %s failed: %s", source, dest, e)
+        log.debug("Probe %s -> %s failed: %s", source, dest, e)
         return ProbeResult(source=source, destination=dest, error=str(e))
     except Exception as e:
         log.exception("Unexpected error probing %s -> %s", source, dest)
