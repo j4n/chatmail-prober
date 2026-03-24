@@ -23,7 +23,8 @@ from .metrics import (
 from .output import start_exporter_server, write_textfile
 from .prober import ProbeResult, RelayPool, run_probe
 
-log = logging.getLogger("chatmail_prober")
+log = logging.getLogger(__name__)
+_app_log = logging.getLogger("chatmail_prober")
 
 AUTO_FETCH_URL = "https://chatmail.at/relays"
 
@@ -412,14 +413,14 @@ def main(argv=None):
     # -v: DEBUG on chatmail_prober (verbose process detail)
     # -vv: DEBUG on chatmail_prober AND root (rpc/deltachat events)
     if args.quiet:
-        log.setLevel(logging.WARNING)
+        _app_log.setLevel(logging.WARNING)
     elif args.verbose >= 2:
-        log.setLevel(logging.DEBUG)
+        _app_log.setLevel(logging.DEBUG)
         logging.getLogger().setLevel(logging.DEBUG)
     elif args.verbose >= 1:
-        log.setLevel(logging.DEBUG)
+        _app_log.setLevel(logging.DEBUG)
     else:
-        log.setLevel(logging.INFO)
+        _app_log.setLevel(logging.INFO)
 
     # Raise the fd soft limit to the hard limit so large relay matrices
     # don't hit the default 1024 cap when deltachat-rpc-server opens many DBs.
@@ -526,10 +527,10 @@ def main(argv=None):
         nonlocal _verbosity_idx
         _verbosity_idx = (_verbosity_idx + 1) % len(_verbosity_levels)
         level, root_level, label = _verbosity_levels[_verbosity_idx]
-        log.setLevel(level)
+        _app_log.setLevel(level)
         logging.getLogger().setLevel(root_level)
         # Log at WARNING so it's visible regardless of current level.
-        log.warning("SIGUSR2: verbosity -> %s", label)
+        _app_log.warning("SIGUSR2: verbosity -> %s", label)
 
     signal.signal(signal.SIGUSR2, _handle_usr2)
 
