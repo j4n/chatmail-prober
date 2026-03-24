@@ -59,10 +59,11 @@ RELAYS               Relay list file(s), one domain per line (positional arg)
 --ping-interval S    Seconds between pings within a probe (default: 0.1)
 --timeout SECS       Per-pair receive timeout in seconds (default: 60)
 --workers N          Max concurrent probe threads (default: 5)
---cache-dir PATH     Base dir for per-relay account directories (default: ~/.cache/chatmail-prober)
+--cache-dir PATH     Base dir for per-worker account directories (default: ~/.cache/chatmail-prober)
+--reset              Remove all account dirs, force fresh account creation
 --exclude PATH       File of pairs to skip: "src->dst" per line (# comments)
 --once               Run one round then exit
--v                   Debug logging
+-v                   Debug logging (-vv for debug+rpc/deltachat events)
 -q / --quiet         Suppress progress output (only show warnings/errors)
 ```
 
@@ -71,7 +72,7 @@ where you only want errors.
 
 A SIGUSR1 signal (`kill -USR1`) stops the service after finishing the current probing round.
 
-A SIGUSR2 signal (`kill -USR2`) cycles verbosity: quiet -> normal -> debug -> quiet.
+A SIGUSR2 signal (`kill -USR2`) cycles verbosity: quiet -> normal -> debug -> debug+rpc -> quiet.
 
 ## Metrics
 
@@ -102,13 +103,13 @@ self-loops). Each pair sends a configurable number of direct 1:1 pings
 via deltachat-rpc-client, producing individual round-trip time measurements
 visualized in two Grafana dashboards.
 
-### Per-relay account directories
+### Per-worker account directories
 
-Accounts are organised by relay domain, not by pair or worker. A RelayPool
-opens one RelayContext (one deltachat-rpc-server subprocess) per relay at the
-start of each round. All probes involving that relay share its RPC context.
-With N relays there are N account directories and N rpc-server processes,
-regardless of the number of workers.
+Each worker thread gets its own RelayPool with an isolated accounts directory
+(`worker-0/`, `worker-1/`, etc.). Within a worker, accounts are reused across
+probes: `get_relay_account()` returns an already-online account when one is
+available, skipping the setup wait. With W workers and N relays there are up
+to W*N account directories and W*N rpc-server processes.
 
 ### Pre-flight alive check and --scan
 
@@ -203,14 +204,14 @@ panel = smokeping_panel(
 ```bash
 # With uv
 uv sync
-uv run pytest tests/ --ignore=tests/test_live.py
+uv run pytest tests/                                    # all tests (live tests use relays.txt.example)
+uv run pytest tests/ --ignore=tests/test_live.py        # unit tests only, no network
+uv run pytest tests/test_live.py -v                     # live tests, defaults to relays.txt.example
+CMPING_LIVE_TEST=custom.relay uv run pytest tests/test_live.py -v  # override relays
 
-# Or With make (creates .venv automatically)
+# Or with make (creates .venv automatically)
 make install-dev
 make test
-
-# Live tests (against real relays)
-CMPING_LIVE_TEST=nine.testrun.org,mailchat.pl .venv/bin/pytest tests/test_live.py -v
 ```
 
 ## cmping-src submodule

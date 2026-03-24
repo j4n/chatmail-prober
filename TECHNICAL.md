@@ -45,7 +45,7 @@ graph LR
         PING["_perform_direct_ping
             prober.py"]
         DCSERVER["deltachat-rpc-server
-            1 per relay via RelayPool"]
+            1 per relay per worker"]
         METRICS["Prometheus Metrics
             metrics.py"]
         HTTP["HTTP /metrics
@@ -161,9 +161,9 @@ graph TD
   sender and receiver. No group creation, no join wait, no multi-receiver
   thread pool. This halves the thread count per probe and eliminates the
   group-join phase entirely.
-- **One deltachat-rpc-server per relay**: A RelayPool opens one RPC context
-  per relay domain at the start of each round. All probes involving that
-  relay share its context. N relays = N subprocesses (not N^2).
+- **Per-worker RelayPools**: Each worker thread gets its own RelayPool with
+  an isolated accounts directory. Within a worker, accounts are reused across
+  probes via `get_relay_account()`. W workers * N relays = W*N subprocesses.
 
 ---
 
@@ -290,11 +290,11 @@ occurred when receiver threads blocked on `queue.get()` without a timeout.
 
 ---
 
-## 6. RelayPool and Worker Isolation
+## 6. Per-Worker Pools and Account Reuse
 
-A RelayPool opens one RelayContext per relay domain at the start of each
-round. All probes share these contexts. Pairs are distributed **round-robin**
-across W workers so each worker processes its pairs sequentially:
+Each worker thread gets its own RelayPool with an isolated accounts directory.
+Pairs are distributed **round-robin** across W workers so each worker
+processes its pairs sequentially:
 
 ```mermaid
 graph LR
@@ -321,34 +321,56 @@ graph LR
         P2 --> P5 --> P8
     end
 
-    subgraph Pool["RelayPool (shared, read-only after open_all)"]
-        CA["RelayContext A"]
-        CB["RelayContext B"]
-        CC["RelayContext C"]
+    subgraph Pool0["Worker-0 RelayPool"]
+        CA0["RelayContext A"]
+        CB0["RelayContext B"]
+        CC0["RelayContext C"]
+    end
+    subgraph Pool1["Worker-1 RelayPool"]
+        CA1["RelayContext A"]
+        CB1["RelayContext B"]
+        CC1["RelayContext C"]
+    end
+    subgraph Pool2["Worker-2 RelayPool"]
+        CA2["RelayContext A"]
+        CB2["RelayContext B"]
+        CC2["RelayContext C"]
     end
 
-    W0 -.-> CA & CB & CC
-    W1 -.-> CA & CB & CC
-    W2 -.-> CA & CB & CC
+    W0 -.-> Pool0
+    W1 -.-> Pool1
+    W2 -.-> Pool2
 ```
+
+### Account reuse
+
+Within a worker, `get_relay_account(domain, exclude)` returns an
+`(account, was_online)` tuple. When `was_online` is True the account is
+already connected and `wait_account_online()` can be skipped, saving the
+IMAP_INBOX_IDLE wait. The `exclude` parameter prevents the same account
+from being used as both sender and receiver in a self-probe.
 
 ### Account directory layout
 
 ```
 ~/.cache/chatmail-prober/
-├── relay-a.example/         # RelayContext accounts_dir for relay-a
-│   ├── accounts.toml
-│   └── ...
-├── relay-b.example/
-├── relay-c.example/
+├── worker-0/
+│   ├── relay-a.example/
+│   │   ├── accounts.toml
+│   │   └── ...
+│   ├── relay-b.example/
+│   └── relay-c.example/
+├── worker-1/
+│   ├── relay-a.example/
+│   ├── relay-b.example/
+│   └── relay-c.example/
 └── alive-check/             # used only during pre-flight alive check
     ├── relay-a.example/
     └── ...
 ```
 
-Each relay gets its own `deltachat-rpc-server` subprocess and accounts
-directory. The RelayPool manages their lifecycle (open, close, reopen on
-RPC crash).
+Each worker's RelayPool manages its own set of `deltachat-rpc-server`
+subprocesses and accounts directories (open, close, reopen on RPC crash).
 
 ---
 
@@ -470,7 +492,7 @@ The 5-second timer in the signal handler fires `os._exit(0)` as a backstop if
 the main thread stays stuck in `as_completed()` after all futures are cancelled.
 
 SIGUSR2 cycles through verbosity levels at runtime without restarting:
-quiet (WARNING only) -> normal (INFO) -> debug (DEBUG).
+quiet (WARNING only) -> normal (INFO) -> debug (DEBUG) -> debug+rpc (DEBUG for all loggers).
 
 ---
 
@@ -504,7 +526,8 @@ classDiagram
 
     class AccountMaker {
         +dc: DeltaChat
-        +get_relay_account(domain) Account
+        +get_relay_account(domain, exclude) (Account, bool)
+        +wait_account_online(account, timeout)
         +wait_all_online(timeout)
     }
 
@@ -544,9 +567,9 @@ flowchart TD
 
     subgraph B["Phase 1: Account Setup"]
         B1["get_relay_account per relay
-            (create or reuse)"]
-        B2["wait_all_online
-            block until IMAP_INBOX_IDLE"]
+            returns (account, was_online)"]
+        B2["wait_account_online per account
+            skip if already online"]
         B1 --> B2
     end
 
@@ -613,12 +636,13 @@ chatmail-prober [relays_file ...] [options]
 | `--ping-interval` | `0.1` | Seconds between individual pings within a probe |
 | `--timeout` | `60` | Per-pair receive timeout in seconds |
 | `--workers` | `5` | Concurrent worker threads |
-| `--cache-dir` | `~/.cache/chatmail-prober` | Root for per-relay account dirs |
+| `--cache-dir` | `~/.cache/chatmail-prober` | Root for per-worker account dirs |
+| `--reset` | false | Remove all account dirs, force fresh account creation |
 | `--exclude PATH` | `None` | File of pairs to skip: `src->dst` per line |
 | `--once` | false | Run one round then exit (useful with --textfile in cron) |
 | `--scan` | false | Self-probe all relays in parallel, print ranked by RTT, exit |
 | `--top N` | `10` | Relays to highlight in --scan output |
-| `-v` | 0 | Debug logging |
+| `-v` | 0 | Debug logging (-vv debug+rpc/deltachat events) |
 | `-q` | false | Quiet: suppress progress, show only warnings/errors |
 
 At least one of `relays` or `--auto-fetch` must be provided.  When both are
@@ -658,12 +682,13 @@ make install-dev
 ### Running tests
 
 ```bash
-uv run python -m pytest tests/ --ignore=tests/test_live.py -v   # all unit tests
-make test                                                        # same via Makefile
+uv run pytest tests/                                    # all tests (live tests use relays.txt.example)
+uv run pytest tests/ --ignore=tests/test_live.py -v     # unit tests only, no network
+make test                                                # same via Makefile
 
-# Live integration tests (requires real relay access):
-CMPING_LIVE_TEST=nine.testrun.org uv run python -m pytest tests/test_live.py -v
-CMPING_LIVE_TEST=nine.testrun.org,mehl.cloud uv run python -m pytest tests/test_live.py -v
+# Live integration tests (defaults to relays.txt.example):
+uv run pytest tests/test_live.py -v
+CMPING_LIVE_TEST=custom.relay uv run pytest tests/test_live.py -v  # override relays
 ```
 
 ### Test categories
@@ -675,7 +700,7 @@ CMPING_LIVE_TEST=nine.testrun.org,mehl.cloud uv run python -m pytest tests/test_
 | `test_prober.py` | No | `_perform_direct_ping` monkeypatched |
 | `test_output.py` | No | None |
 | `test_thread_leak.py` | No | None -- real threads + queues |
-| `test_live.py` | Yes | None -- full stack |
+| `test_live.py` | Yes (defaults to relays.txt.example; override with CMPING_LIVE_TEST) | None -- full stack |
 
 ### Adding a metric
 
