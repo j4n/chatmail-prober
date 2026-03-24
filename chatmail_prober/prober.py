@@ -133,38 +133,66 @@ class AccountMaker:
         self.dc = dc
         self.online = []
 
-    def wait_all_online(self, timeout=None):
+    def wait_account_online(self, account, timeout=None):
+        """Wait for a single account to reach IMAP_INBOX_IDLE."""
         deadline = time.time() + timeout if timeout is not None else None
-        remaining = list(self.online)
-        while remaining:
-            ac = remaining.pop()
-            eq = ac._rpc.get_queue(ac.id)
-            while True:
-                if deadline is not None and time.time() >= deadline:
-                    addr = ac.get_config("addr")
-                    raise PingError(f"Timeout waiting for {addr} to come online")
-                try:
-                    event = AttrDict(eq.get(timeout=1.0))
-                except queue.Empty:
-                    continue
-                if event.kind == EventType.IMAP_INBOX_IDLE:
-                    break
-                elif event.kind == EventType.ERROR:
-                    log.warning("ERROR during profile setup: %s", event.msg)
+        eq = account._rpc.get_queue(account.id)
+        while True:
+            if deadline is not None and time.time() >= deadline:
+                addr = account.get_config("addr")
+                raise PingError(f"Timeout waiting for {addr} to come online")
+            try:
+                event = AttrDict(eq.get(timeout=1.0))
+            except queue.Empty:
+                continue
+            if event.kind == EventType.IMAP_INBOX_IDLE:
+                return
+            elif event.kind == EventType.ERROR:
+                log.warning("ERROR during profile setup: %s", event.msg)
+
+    def wait_all_online(self, timeout=None):
+        """Wait for all accounts in self.online to come online.
+
+        Convenience wrapper for standalone run_probe path.
+        """
+        for account in self.online:
+            self.wait_account_online(account, timeout=timeout)
 
     def _add_online(self, account):
         account.set_config("bot", "1")
         account.start_io()
         self.online.append(account)
 
-    def get_relay_account(self, domain):
+    def get_relay_account(self, domain, exclude=None):
+        """Get or create an account for domain.
+
+        Args:
+            domain: relay domain to get an account for
+            exclude: optional set of accounts to skip (e.g. the sender
+                     account when fetching the receiver for a self-loop)
+
+        Returns (account, was_online) -- was_online=True means the account
+        was already running and does not need wait_account_online().
+        """
+        _exclude = exclude or ()
+
+        # Reuse an already-online account for this domain.
+        for account in self.online:
+            if account in _exclude:
+                continue
+            addr = account.get_config("configured_addr")
+            if addr and addr.split("@")[1] == domain:
+                return account, True
+
+        # Find a configured-but-offline account, or create a new one.
         for account in self.dc.get_all_accounts():
+            if account in _exclude:
+                continue
             addr = account.get_config("configured_addr")
             if addr is not None:
                 addr_domain = addr.split("@")[1] if "@" in addr else None
-                if addr_domain == domain:
-                    if account not in self.online:
-                        break
+                if addr_domain == domain and account not in self.online:
+                    break
         else:
             account = self.dc.add_account()
             qr_url = create_qr_url(domain)
@@ -180,7 +208,7 @@ class AccountMaker:
             log.error("Failed to bring profile online for %s: %s", domain, e)
             raise
 
-        return account
+        return account, False
 
 
 # ---------------------------------------------------------------------------
@@ -304,38 +332,50 @@ def _perform_direct_ping(relay_contexts, source, dest, count, interval, timeout)
     account_setup_start = time.time()
 
     try:
-        sender = sender_maker.get_relay_account(source)
+        sender, sender_was_online = sender_maker.get_relay_account(source)
     except Exception as e:
-        raise PingError(f"Failed to setup sender profile on {source}: {e}") from e
-
-    try:
-        receiver = receiver_maker.get_relay_account(dest)
-    except Exception as e:
-        raise PingError(f"Failed to setup receiver profile on {dest}: {e}") from e
-
-    # Wait for both accounts to come online
-    unique_relays = list({source, dest})
-    all_makers = [relay_contexts[r].maker for r in unique_relays]
-    errors = []
-
-    def _wait(maker):
-        try:
-            maker.wait_all_online(timeout=timeout)
-        except Exception as e:
-            errors.append(e)
-
-    threads = []
-    for maker in all_makers:
-        t = threading.Thread(target=_wait, args=(maker,))
-        t.start()
-        threads.append(t)
-    for t in threads:
-        t.join()
-
-    if errors:
         raise PingError(
-            f"Timeout or error waiting for profiles to be online: {errors[0]}"
-        ) from errors[0]
+            f"Failed to setup sender profile on {source}: {type(e).__name__}: {e}"
+        ) from e
+
+    # For self-loops (source==dest), exclude sender so we get a different account.
+    exclude = (sender,) if source == dest else None
+    try:
+        receiver, receiver_was_online = receiver_maker.get_relay_account(dest, exclude=exclude)
+    except Exception as e:
+        raise PingError(
+            f"Failed to setup receiver profile on {dest}: {type(e).__name__}: {e}"
+        ) from e
+
+    # Only wait for accounts that were just brought online; already-online
+    # accounts had their IMAP_INBOX_IDLE event consumed on a previous probe.
+    needs_wait = []
+    if not sender_was_online:
+        needs_wait.append((sender_maker, sender))
+    if not receiver_was_online:
+        needs_wait.append((receiver_maker, receiver))
+
+    if needs_wait:
+        errors = []
+
+        def _wait_one(maker, account):
+            try:
+                maker.wait_account_online(account, timeout=timeout)
+            except Exception as e:
+                errors.append(e)
+
+        threads = []
+        for maker, acct in needs_wait:
+            t = threading.Thread(target=_wait_one, args=(maker, acct))
+            t.start()
+            threads.append(t)
+        for t in threads:
+            t.join()
+
+        if errors:
+            raise PingError(
+                f"Timeout or error waiting for profiles to be online: {errors[0]}"
+            ) from errors[0]
 
     account_setup_time = time.time() - account_setup_start
 
@@ -361,10 +401,11 @@ def _perform_direct_ping(relay_contexts, source, dest, count, interval, timeout)
 # ---------------------------------------------------------------------------
 
 class RelayPool:
-    """Manages one RelayContext per relay domain.
+    """Manages one RelayContext per relay domain within a single worker.
 
-    Contexts are opened once and shared across all probes in a round.
-    Uses per-relay accounts dirs (cache_dir/relay) instead of per-worker.
+    Each worker gets its own RelayPool with an isolated accounts directory.
+    Accounts persist across probes within the same worker and across rounds,
+    so only the first probe per relay pays the account-creation cost.
     """
 
     def __init__(self, cache_dir):

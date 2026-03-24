@@ -1,34 +1,33 @@
 """Live integration tests against real chatmail relays.
 
-Set CMPING_LIVE_TEST to a comma-separated list of relays to enable:
+Uses relays from relays.txt.example by default.  Override with
+CMPING_LIVE_TEST=relay1,relay2,... to test different relays.
 
-    CMPING_LIVE_TEST=nine.testrun.org uv run pytest tests/test_live.py -v
-    CMPING_LIVE_TEST=nine.testrun.org,tarpit.fun,mehl.cloud uv run pytest tests/test_live.py -v
-
-Tests adapt to however many relays are provided:
-- 1 relay: self-loop + error handling tests
-- 2+ relays: also cross-relay tests for all ordered pairs
+    uv run pytest tests/test_live.py -v
+    CMPING_LIVE_TEST=custom.relay uv run pytest tests/test_live.py -v
 """
 
 import os
 import threading
+from pathlib import Path
 
 import pytest
 
+from chatmail_prober.__main__ import read_relay_list
 from chatmail_prober.prober import run_probe
+
+EXAMPLE_RELAYS = str(Path(__file__).resolve().parent.parent / "relays.txt.example")
 
 
 def _get_relays():
-    """Parse relay list from CMPING_LIVE_TEST env var."""
+    """Parse relay list from CMPING_LIVE_TEST env var, or from relays.txt.example."""
     val = os.environ.get("CMPING_LIVE_TEST", "")
-    if not val:
-        return []
-    return [r.strip() for r in val.split(",") if r.strip()]
+    if val:
+        return [r.strip() for r in val.split(",") if r.strip()]
+    return read_relay_list([EXAMPLE_RELAYS])
 
 
 RELAYS = _get_relays()
-
-live = pytest.mark.skipif(not RELAYS, reason="set CMPING_LIVE_TEST=relay1,relay2,...")
 
 
 def _self_loop_ids():
@@ -39,7 +38,6 @@ def _cross_pair_ids():
     return [f"{s}->{d}" for s in RELAYS for d in RELAYS if s != d]
 
 
-@live
 class TestLiveSelfLoop:
     """Probe each relay to itself."""
 
@@ -58,7 +56,6 @@ class TestLiveSelfLoop:
         assert result.message_time > 0
 
 
-@live
 @pytest.mark.skipif(len(RELAYS) < 2, reason="need >=2 relays for cross-relay tests")
 class TestLiveCrossRelay:
     """Probe all ordered cross-relay pairs."""
@@ -79,7 +76,6 @@ class TestLiveCrossRelay:
         assert all(rtt > 0 for rtt in result.rtts_ms)
 
 
-@live
 class TestLiveErrorHandling:
     """Verify graceful handling of unreachable relays."""
 
@@ -92,7 +88,6 @@ class TestLiveErrorHandling:
         assert result.sent == 0
 
 
-@live
 class TestThreadCleanup:
     """Verify that threads don't accumulate across probes."""
 

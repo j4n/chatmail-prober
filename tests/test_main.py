@@ -72,6 +72,14 @@ class TestParseArgs:
         assert args.quiet is True
         assert args.verbose == 0
 
+    def test_reset_flag(self):
+        args = parse_args(["r.txt", "--reset"])
+        assert args.reset is True
+
+    def test_reset_default_false(self):
+        args = parse_args(["r.txt"])
+        assert args.reset is False
+
     def test_all_flags(self):
         args = parse_args([
             "r.txt",
@@ -170,15 +178,19 @@ class _FakePool:
         pass
 
 
+def _make_worker_pools(n):
+    """Create n fake worker pools for testing."""
+    return [_FakePool() for _ in range(n)]
+
+
 class TestRunRound:
     def test_completes_all_pairs(self, tmp_path, monkeypatch, _fresh_metrics):
-        monkeypatch.setattr("chatmail_prober.__main__.RelayPool", _FakePool)
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
         relays = ["a.example", "b.example", "c.example"]
         args = _make_args(tmp_path, workers=2)
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
         try:
-            run_round(relays, args, executors)
+            run_round(relays, args, executors, _make_worker_pools(args.workers))
         finally:
             for ex in executors:
                 ex.shutdown(wait=False)
@@ -192,7 +204,6 @@ class TestRunRound:
                 assert val == 1.0, f"{s} -> {d} not recorded"
 
     def test_shutdown_skips_metrics(self, tmp_path, monkeypatch, _fresh_metrics):
-        monkeypatch.setattr("chatmail_prober.__main__.RelayPool", _FakePool)
         shutdown_event = threading.Event()
         call_count = 0
 
@@ -210,7 +221,8 @@ class TestRunRound:
         args = _make_args(tmp_path, workers=1)  # single worker for deterministic ordering
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
         try:
-            run_round(relays, args, executors, shutdown_event)
+            run_round(relays, args, executors, _make_worker_pools(args.workers),
+                      shutdown_event)
         finally:
             for ex in executors:
                 ex.shutdown(wait=False)
@@ -230,8 +242,6 @@ class TestRunRound:
         assert recorded < 9, f"Expected some pairs skipped, but all {recorded} recorded"
 
     def test_crashed_probe_records_error(self, tmp_path, monkeypatch, _fresh_metrics):
-        monkeypatch.setattr("chatmail_prober.__main__.RelayPool", _FakePool)
-
         def _crashing_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, relay_contexts=None):
             if source == "a.example" and dest == "b.example":
                 raise RuntimeError("boom")
@@ -242,7 +252,7 @@ class TestRunRound:
         args = _make_args(tmp_path, workers=2)
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
         try:
-            run_round(relays, args, executors)
+            run_round(relays, args, executors, _make_worker_pools(args.workers))
         finally:
             for ex in executors:
                 ex.shutdown(wait=False)
@@ -303,7 +313,6 @@ class TestReadExcludeList:
 
 class TestRunRoundExclude:
     def test_excludes_pairs(self, tmp_path, monkeypatch, _fresh_metrics):
-        monkeypatch.setattr("chatmail_prober.__main__.RelayPool", _FakePool)
         probed_pairs = []
 
         def _tracking_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, relay_contexts=None):
@@ -316,7 +325,8 @@ class TestRunRoundExclude:
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
         exclude = {("a.example", "b.example")}
         try:
-            run_round(relays, args, executors, exclude=exclude)
+            run_round(relays, args, executors, _make_worker_pools(args.workers),
+                      exclude=exclude)
         finally:
             for ex in executors:
                 ex.shutdown(wait=False)

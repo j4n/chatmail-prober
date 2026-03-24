@@ -151,7 +151,7 @@ def parse_args(argv=None):
         "-v", "--verbose",
         action="count",
         default=0,
-        help="increase verbosity (-v = debug logging)",
+        help="increase verbosity (-v debug, -vv rpc/deltachat events)",
     )
     parser.add_argument(
         "-q", "--quiet",
@@ -180,6 +180,11 @@ def parse_args(argv=None):
         default=None,
         metavar="PATH",
         help='file of pairs to skip, one per line: "src->dst" (# comments allowed)',
+    )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="remove all account directories to force fresh account creation",
     )
     return parser.parse_args(argv)
 
@@ -305,13 +310,13 @@ def check_relays_alive(relays, args):
     return alive
 
 
-def run_round(relays, args, executors, shutdown_event=None, textfile=None,
-              exclude=None):
+def run_round(relays, args, executors, worker_pools, shutdown_event=None,
+              textfile=None, exclude=None):
     """Run one complete probe round across all relay pairs.
 
-    Opens a RelayPool (one RPC context per relay) for the round and passes
-    shared relay_contexts to each probe.  Pairs are distributed round-robin
-    across per-worker executors.
+    Each worker has its own RelayPool with isolated account directories.
+    Accounts persist across probes within a worker and across rounds, so
+    only the first probe per relay per worker pays account-creation cost.
 
     If shutdown_event is set during the round, the loop breaks immediately
     without recording metrics for in-flight probes (which would show spurious
@@ -323,72 +328,68 @@ def run_round(relays, args, executors, shutdown_event=None, textfile=None,
     log.info("Starting probe round: %d pairs, %d workers", len(pairs), args.workers)
     round_start = time.time()
 
-    cache_dir = Path(args.cache_dir).expanduser()
-    pool = RelayPool(cache_dir)
-
-    try:
+    # Ensure all worker pools have contexts for all relays.
+    for pool in worker_pools:
         pool.open_all(relays)
-        relay_contexts = pool.contexts()
 
-        # Partition pairs round-robin: pair i goes to worker i % workers
-        worker_pairs = [[] for _ in range(args.workers)]
-        for i, pair in enumerate(pairs):
-            worker_pairs[i % args.workers].append(pair)
+    # Partition pairs round-robin: pair i goes to worker i % workers
+    worker_pairs = [[] for _ in range(args.workers)]
+    for i, pair in enumerate(pairs):
+        worker_pairs[i % args.workers].append(pair)
 
-        all_futures = {}
-        for worker_id, executor in enumerate(executors):
-            for src, dst in worker_pairs[worker_id]:
-                try:
-                    future = executor.submit(
-                        run_probe, src, dst, args.count, args.ping_interval,
-                        timeout=args.timeout,
-                        relay_contexts=relay_contexts,
-                    )
-                except RuntimeError:
-                    # Executor was shut down (e.g. by signal handler).
-                    break
-                all_futures[future] = (src, dst)
-
-        completed = 0
-        for future in as_completed(all_futures):
-            if shutdown_event and shutdown_event.is_set():
-                break
-            completed += 1
-            src, dst = all_futures[future]
+    all_futures = {}
+    for worker_id, executor in enumerate(executors):
+        relay_contexts = worker_pools[worker_id].contexts()
+        for src, dst in worker_pairs[worker_id]:
             try:
-                result = future.result()
-            except Exception as exc:
-                log.exception("src=%s dst=%s worker_crash", src, dst)
-                result = ProbeResult(src, dst, error=str(exc))
-            update_metrics(result)
-            if completed % 50 == 0:
-                gc.collect()
-                if textfile:
-                    write_textfile(textfile)
-            if result.error:
-                log.warning(
-                    "[%d/%d] src=%s dst=%s error=%s",
-                    completed, len(pairs), src, dst, result.error,
+                future = executor.submit(
+                    run_probe, src, dst, args.count, args.ping_interval,
+                    timeout=args.timeout,
+                    relay_contexts=relay_contexts,
                 )
-                # Reopen contexts for relays involved in RPC-level failures
-                # so subsequent probes can recover.
-                _rpc_keywords = ("BrokenPipe", "ConnectionReset", "rpc",
-                                 "EOFError", "dead", "process")
-                if any(kw.lower() in result.error.lower() for kw in _rpc_keywords):
-                    for relay in (src, dst):
-                        try:
-                            pool.reopen(relay)
-                            relay_contexts.update(pool.contexts())
-                        except Exception as reopen_err:
-                            log.warning("Failed to reopen %s: %s", relay, reopen_err)
-            else:
-                log.info(
-                    "[%d/%d] src=%s dst=%s sent=%d recv=%d avg_ms=%.0f loss=%.1f%%",
-                    completed, len(pairs), src, dst, result.sent, result.received,
-                    _avg_ms(result.rtts_ms), result.loss,
-                )
-    finally:
-        pool.close()
+            except RuntimeError:
+                # Executor was shut down (e.g. by signal handler).
+                break
+            all_futures[future] = (src, dst, worker_id)
+
+    completed = 0
+    for future in as_completed(all_futures):
+        if shutdown_event and shutdown_event.is_set():
+            break
+        completed += 1
+        src, dst, worker_id = all_futures[future]
+        try:
+            result = future.result()
+        except Exception as exc:
+            log.exception("src=%s dst=%s worker_crash", src, dst)
+            result = ProbeResult(src, dst, error=str(exc))
+        update_metrics(result)
+        if completed % 50 == 0:
+            gc.collect()
+            if textfile:
+                write_textfile(textfile)
+        if result.error:
+            log.warning(
+                "[%d/%d] src=%s dst=%s error=%s",
+                completed, len(pairs), src, dst, result.error,
+            )
+            # Reopen contexts for relays involved in RPC-level failures
+            # so subsequent probes can recover.
+            _rpc_keywords = ("BrokenPipe", "ConnectionReset", "rpc",
+                             "EOFError", "dead", "process")
+            if any(kw.lower() in result.error.lower() for kw in _rpc_keywords):
+                pool = worker_pools[worker_id]
+                for relay in (src, dst):
+                    try:
+                        pool.reopen(relay)
+                    except Exception as reopen_err:
+                        log.warning("Failed to reopen %s: %s", relay, reopen_err)
+        else:
+            log.info(
+                "[%d/%d] src=%s dst=%s sent=%d recv=%d avg_ms=%.0f loss=%.1f%%",
+                completed, len(pairs), src, dst, result.sent, result.received,
+                _avg_ms(result.rtts_ms), result.loss,
+            )
 
     elapsed = time.time() - round_start
     last_round_timestamp.set(time.time())
@@ -408,8 +409,13 @@ def main(argv=None):
     )
 
     # Our logger defaults to INFO so progress is always visible.
+    # -v: DEBUG on chatmail_prober (verbose process detail)
+    # -vv: DEBUG on chatmail_prober AND root (rpc/deltachat events)
     if args.quiet:
         log.setLevel(logging.WARNING)
+    elif args.verbose >= 2:
+        log.setLevel(logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)
     elif args.verbose >= 1:
         log.setLevel(logging.DEBUG)
     else:
@@ -440,6 +446,13 @@ def main(argv=None):
 
     cache_dir = Path(args.cache_dir).expanduser()
     cache_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.reset:
+        import shutil
+        for child in cache_dir.iterdir():
+            if child.is_dir() and child.name != "alive-check":
+                shutil.rmtree(child)
+                log.info("Reset: removed %s", child)
 
     if args.scan:
         scan_relays(relays, args)
@@ -490,17 +503,20 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGUSR1, _handle_usr1)
 
-    # Verbosity cycle: quiet -> normal -> debug -> quiet ...
+    # Verbosity cycle: quiet -> normal -> debug -> debug+rpc -> quiet ...
     _verbosity_levels = [
-        # (log_level, label)
-        (logging.WARNING, "quiet"),
-        (logging.INFO,    "normal"),
-        (logging.DEBUG,   "debug"),
+        # (log_level, root_level, label)
+        (logging.WARNING, logging.WARNING, "quiet"),
+        (logging.INFO,    logging.WARNING, "normal"),
+        (logging.DEBUG,   logging.WARNING, "debug"),
+        (logging.DEBUG,   logging.DEBUG,   "debug+rpc"),
     ]
 
     # Determine starting position in the cycle from startup flags.
     if args.quiet:
         _verbosity_idx = 0
+    elif args.verbose >= 2:
+        _verbosity_idx = 3
     elif args.verbose >= 1:
         _verbosity_idx = 2
     else:
@@ -509,8 +525,9 @@ def main(argv=None):
     def _handle_usr2(signum, frame):
         nonlocal _verbosity_idx
         _verbosity_idx = (_verbosity_idx + 1) % len(_verbosity_levels)
-        level, label = _verbosity_levels[_verbosity_idx]
+        level, root_level, label = _verbosity_levels[_verbosity_idx]
         log.setLevel(level)
+        logging.getLogger().setLevel(root_level)
         # Log at WARNING so it's visible regardless of current level.
         log.warning("SIGUSR2: verbosity -> %s", label)
 
@@ -527,9 +544,14 @@ def main(argv=None):
     # Create executors; reused across rounds to keep worker threads warm.
     executors.extend(ThreadPoolExecutor(max_workers=1) for _ in range(args.workers))
 
+    # Per-worker RelayPools: each worker gets its own account directory so
+    # accounts are reused across probes within the same worker and across rounds.
+    worker_pools = [RelayPool(cache_dir / f"worker-{i}") for i in range(args.workers)]
+
     try:
         while not shutdown_event.is_set():
-            elapsed = run_round(relays, args, executors, shutdown_event,
+            elapsed = run_round(relays, args, executors, worker_pools,
+                                shutdown_event,
                                 textfile=args.textfile, exclude=exclude)
 
             if args.textfile:
@@ -552,6 +574,8 @@ def main(argv=None):
         if args.textfile:
             log.info("Writing final metrics")
             write_textfile(args.textfile)
+        for pool in worker_pools:
+            pool.close()
         for ex in executors:
             ex.shutdown(wait=not shutdown_event.is_set(), cancel_futures=True)
         if shutdown_event.is_set():
