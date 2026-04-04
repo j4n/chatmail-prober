@@ -67,6 +67,15 @@ RELAYS               Relay list file(s), one domain per line (positional arg)
 -q / --quiet         Suppress progress output (only show warnings/errors)
 ```
 
+You can combine `--auto-fetch` with static relay file(s) to merge both lists:
+
+```bash
+# Fetch the public relay list AND include your own relays
+chatmail-prober my-extra-relays.txt --auto-fetch /tmp/fetched-relays.txt
+```
+
+Duplicates across files are deduplicated automatically.
+
 Progress is shown at INFO level by default (no flags needed). Use `-q` in cron/systemd
 where you only want errors.
 
