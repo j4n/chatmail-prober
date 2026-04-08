@@ -405,11 +405,17 @@ flowchart LR
         M6[cmping_probe_loss_ratio]
         M7[cmping_send_errors_total]
         M8[cmping_account_setup_seconds]
+        M9[cmping_relay_available]
     end
+
+    ALC["check_relays_alive()
+        set 1 (up) or 0 (down)
+        per configured relay"]
 
     PR --> CHK
     CHK -->|yes| ERR
     CHK -->|no| OK
+    ALC --> M9
     ERR --> M5
     ERR --> M6
     ERR --> M7
@@ -425,8 +431,8 @@ flowchart LR
     OK --> M6
     OK --> M8
 
-    M1 & M2 & M3 & M4 & M5 & M6 & M7 & M8 -->|"text/plain"| HTTP[":9740/metrics"]
-    M1 & M2 & M3 & M4 & M5 & M6 & M7 & M8 -->|"atomic write"| TEXTFILE[".prom file"]
+    M1 & M2 & M3 & M4 & M5 & M6 & M7 & M8 & M9 -->|"text/plain"| HTTP[":9740/metrics"]
+    M1 & M2 & M3 & M4 & M5 & M6 & M7 & M8 & M9 -->|"atomic write"| TEXTFILE[".prom file"]
 ```
 
 ### Labels
@@ -441,6 +447,12 @@ Per-pair metrics carry three labels:
 
 Round-level metrics (`cmping_last_round_completion_timestamp`,
 `cmping_round_duration_seconds`) have no labels.
+
+`cmping_relay_available` has `relay` and `reason` labels. It is set per
+configured relay in `check_relays_alive()`, not in `update_metrics()`.
+`reason` is `ok` for alive relays, or one of: `timeout`, `connection_refused`,
+`dns`, `tls`, `auth`, `setup`, `unknown` for dead ones. Old reason labels are removed
+each round before setting the new value.
 
 ### Error behavior
 
@@ -740,7 +752,8 @@ The round time is roughly `ceil(N^2 / workers) * avg_probe_time`.
 
 **Handling**: The pre-flight `check_relays_alive()` runs a count=1 self-probe
 on every relay and excludes dead ones from the matrix for that round.
-Dead relays appear in `cmping_send_errors_total` and `cmping_probe_success=0`.
+Dead relays are exposed via `cmping_relay_available{relay="..."}=0` and also
+appear in `cmping_send_errors_total` and `cmping_probe_success=0`.
 
 ### MemoryError / "can't start new thread"
 

@@ -97,10 +97,14 @@ A SIGUSR2 signal (`kill -USR2`) cycles verbosity: quiet -> normal -> debug -> de
 | `cmping_account_setup_seconds` | Gauge   | Time spent on account setup                         |
 | `cmping_last_round_completion_timestamp` | Gauge | Unix timestamp of last completed round  |
 | `cmping_round_duration_seconds` | Gauge   | Wall-clock time of last completed round              |
+| `cmping_relay_available`       | Gauge   | 1 if relay passed alive check, 0 if unreachable     |
 
 Per-pair metrics have `source`, `destination`, and `probe_type` labels.
 `probe_type` is `"self"` when source equals destination, `"cross"` otherwise.
-The last two (round-level) metrics have no labels.
+Round-level metrics have no labels.
+`cmping_relay_available` has `relay` and `reason` labels. `reason` is `ok` when
+the relay is up, or a category like `timeout`, `connection_refused`, `dns`,
+`tls`, `auth`, `setup`, or `unknown` when it is down.
 
 On probe error, RTT gauges are set to NaN so dashboards show a gap
 instead of stale values from the previous successful round.

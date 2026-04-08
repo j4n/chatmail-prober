@@ -38,6 +38,9 @@ def _fresh_metrics(monkeypatch):
         "account_setup_seconds": metrics_mod.Gauge(
             "cmping_account_setup_seconds_test", "test", labels, registry=registry,
         ),
+        "relay_available": metrics_mod.Gauge(
+            "cmping_relay_available_test", "test", ["relay", "reason"], registry=registry,
+        ),
     }
     for name, metric in new.items():
         monkeypatch.setattr(metrics_mod, name, metric)
@@ -192,3 +195,131 @@ class TestClearStaleLabels:
 
         assert lbl not in metrics_mod.send_errors_total._metrics
         assert lbl not in metrics_mod.rtt_median._metrics
+
+
+class TestClearStaleRelayLabels:
+    def test_removes_labels_for_unconfigured_relay(self):
+        metrics_mod.relay_available.labels(relay="a.example", reason="ok").set(1)
+        metrics_mod.relay_available.labels(relay="b.example", reason="ok").set(1)
+
+        metrics_mod.clear_stale_relay_labels(["a.example"])
+
+        assert ("a.example", "ok") in metrics_mod.relay_available._metrics
+        assert ("b.example", "ok") not in metrics_mod.relay_available._metrics
+
+    def test_keeps_all_configured_relays(self):
+        relays = ["a.example", "b.example", "c.example"]
+        for r in relays:
+            metrics_mod.relay_available.labels(relay=r, reason="ok").set(1)
+
+        metrics_mod.clear_stale_relay_labels(relays)
+
+        for r in relays:
+            assert (r, "ok") in metrics_mod.relay_available._metrics
+
+    def test_noop_when_no_labels_exist(self):
+        # Should not raise when metric has no label sets yet
+        metrics_mod.clear_stale_relay_labels(["a.example"])
+
+
+class TestRemoveRelayAvailableLabels:
+    def test_removes_all_reason_labels_for_relay(self):
+        metrics_mod.relay_available.labels(relay="a.example", reason="ok").set(1)
+        metrics_mod.relay_available.labels(relay="a.example", reason="timeout").set(0)
+        metrics_mod.relay_available.labels(relay="b.example", reason="ok").set(1)
+
+        metrics_mod.remove_relay_available_labels("a.example")
+
+        assert ("a.example", "ok") not in metrics_mod.relay_available._metrics
+        assert ("a.example", "timeout") not in metrics_mod.relay_available._metrics
+        assert ("b.example", "ok") in metrics_mod.relay_available._metrics
+
+    def test_noop_when_relay_not_present(self):
+        metrics_mod.remove_relay_available_labels("nonexistent.example")
+
+
+class TestRelayAvailableMetric:
+    def test_alive_relay_set_to_one_with_reason_ok(self):
+        metrics_mod.relay_available.labels(relay="a.example", reason="ok").set(1)
+        assert metrics_mod.relay_available.labels(
+            relay="a.example", reason="ok")._value.get() == 1.0
+
+    def test_dead_relay_set_to_zero_with_reason(self):
+        metrics_mod.relay_available.labels(relay="a.example", reason="timeout").set(0)
+        assert metrics_mod.relay_available.labels(
+            relay="a.example", reason="timeout")._value.get() == 0.0
+
+    def test_reason_changes_between_rounds(self):
+        # Round 1: relay is down with timeout
+        metrics_mod.relay_available.labels(relay="a.example", reason="timeout").set(0)
+        assert ("a.example", "timeout") in metrics_mod.relay_available._metrics
+
+        # Round 2: clear old labels, relay comes back
+        metrics_mod.remove_relay_available_labels("a.example")
+        metrics_mod.relay_available.labels(relay="a.example", reason="ok").set(1)
+
+        assert ("a.example", "timeout") not in metrics_mod.relay_available._metrics
+        assert metrics_mod.relay_available.labels(
+            relay="a.example", reason="ok")._value.get() == 1.0
+
+
+class TestClassifyAliveCheckError:
+    def test_none_returns_ok(self):
+        assert metrics_mod.classify_alive_check_error(None) == "ok"
+
+    def test_timeout_variants(self):
+        assert metrics_mod.classify_alive_check_error("Timeout waiting for foo") == "timeout"
+        assert metrics_mod.classify_alive_check_error("Connection timed out") == "timeout"
+        assert metrics_mod.classify_alive_check_error("exceeded global deadline") == "timeout"
+        assert metrics_mod.classify_alive_check_error("timeout") == "timeout"
+
+    def test_connection_refused(self):
+        assert metrics_mod.classify_alive_check_error("Connection refused") == "connection_refused"
+        assert metrics_mod.classify_alive_check_error(
+            "ConnectionRefusedError: [Errno 111]") == "connection_refused"
+
+    def test_dns(self):
+        assert metrics_mod.classify_alive_check_error(
+            "Name or service not known") == "dns"
+        assert metrics_mod.classify_alive_check_error(
+            "getaddrinfo failed") == "dns"
+        assert metrics_mod.classify_alive_check_error(
+            "Could not find DNS resolutions for imap.foo:993") == "dns"
+        assert metrics_mod.classify_alive_check_error(
+            "dial tcp: lookup relay.example: no such host") == "dns"
+        assert metrics_mod.classify_alive_check_error(
+            "NXDOMAIN error for imap.example") == "dns"
+
+    def test_dns_in_tls_connection_string(self):
+        # Real-world: DNS error inside a TLS connection URI -- dns must win
+        assert metrics_mod.classify_alive_check_error(
+            'IMAP failed to connect to imap.chat.sus.fr:993:tls: '
+            'Could not find DNS resolutions for imap.chat.sus.fr:993.'
+        ) == "dns"
+
+    def test_tls(self):
+        assert metrics_mod.classify_alive_check_error("SSL: CERTIFICATE_VERIFY_FAILED") == "tls"
+        assert metrics_mod.classify_alive_check_error("certificate has expired") == "tls"
+
+    def test_auth(self):
+        assert metrics_mod.classify_alive_check_error(
+            "AUTHENTICATIONFAILED") == "auth"
+        assert metrics_mod.classify_alive_check_error(
+            "authentication failed") == "auth"
+
+    def test_auth_inside_setup_message(self):
+        # Real foobar.org error: auth failure wrapped in setup error
+        assert metrics_mod.classify_alive_check_error(
+            'Failed to setup sender profile on foobar.org: JsonRpcError: '
+            "{'code': -1, 'message': 'Error:\\n\\n\"Cannot login as "
+            '"gbegx86r9@foobar.org". Please check if the email address '
+            "and the password are correct. (no response: code: None, "
+            'info: Some("[AUTHENTICATIONFAILED] Authentication failed."))"\'}'
+        ) == "auth"
+
+    def test_setup(self):
+        assert metrics_mod.classify_alive_check_error(
+            "Failed to setup sender profile on foo: RPC process crashed") == "setup"
+
+    def test_unknown_fallback(self):
+        assert metrics_mod.classify_alive_check_error("something unexpected") == "unknown"

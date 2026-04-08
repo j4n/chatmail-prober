@@ -91,6 +91,13 @@ round_duration_seconds = Gauge(
     registry=CMPING_REGISTRY,
 )
 
+relay_available = Gauge(
+    "cmping_relay_available",
+    "Whether the relay passed the pre-flight alive check this round (1 = up, 0 = down)",
+    ["relay", "reason"],
+    registry=CMPING_REGISTRY,
+)
+
 
 def clear_stale_labels(active_relays):
     """Remove label sets for relays no longer in the active set.
@@ -112,6 +119,49 @@ def clear_stale_labels(active_relays):
             src, dst, _ = label_values
             if src not in active or dst not in active:
                 metric.remove(*label_values)
+
+
+def classify_alive_check_error(error_str):
+    """Classify an alive-check error string into a fixed category."""
+    if error_str is None:
+        return "ok"
+    lower = error_str.lower()
+    if "timeout" in lower or "timed out" in lower or "deadline" in lower:
+        return "timeout"
+    if "connection refused" in lower or "connectionrefusederror" in lower:
+        return "connection_refused"
+    if ("name or service not known" in lower or "getaddrinfo" in lower
+            or "dns resolution" in lower or "no such host" in lower
+            or "nxdomain" in lower):
+        return "dns"
+    if "ssl" in lower or "certificate" in lower:
+        return "tls"
+    if "auth" in lower or "authentication" in lower:
+        return "auth"
+    if "failed to setup" in lower:
+        return "setup"
+    return "unknown"
+
+
+def clear_stale_relay_labels(configured_relays):
+    """Remove relay_available label sets for relays no longer in the configured list."""
+    active = set(configured_relays)
+    for label_values in list(relay_available._metrics.keys()):
+        relay, _reason = label_values
+        if relay not in active:
+            relay_available.remove(*label_values)
+
+
+def remove_relay_available_labels(relay):
+    """Remove all relay_available label sets for a given relay.
+
+    Called before setting a new value so that stale reason labels
+    from a previous round do not linger.
+    """
+    for label_values in list(relay_available._metrics.keys()):
+        r, _reason = label_values
+        if r == relay:
+            relay_available.remove(*label_values)
 
 
 def update_metrics(result):

@@ -17,8 +17,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .metrics import (
-    clear_stale_labels, last_round_timestamp, round_duration_seconds,
-    update_metrics,
+    classify_alive_check_error, clear_stale_labels, clear_stale_relay_labels,
+    last_round_timestamp, relay_available, remove_relay_available_labels,
+    round_duration_seconds, update_metrics,
 )
 from .output import start_exporter_server, write_textfile
 from .prober import ProbeResult, RelayPool, run_probe
@@ -281,7 +282,7 @@ def check_relays_alive(relays, args):
                         str(cache_dir / "alive-check" / r), args.timeout): r
             for r in relays
         }
-        dead = set()
+        dead = {}  # relay -> error string
         completed = set()
         try:
             for future in as_completed(futures, timeout=args.timeout * 2):
@@ -290,7 +291,7 @@ def check_relays_alive(relays, args):
                 result = future.result()
                 if result.error:
                     log.warning("DEAD %s: %s", relay, result.error)
-                    dead.add(relay)
+                    dead[relay] = result.error
                 else:
                     log.info("OK   %s (%.0fms)", relay, result.rtts_ms[0] if result.rtts_ms else 0)
                 remaining = [r for r in relays if r not in completed and r not in dead]
@@ -302,12 +303,20 @@ def check_relays_alive(relays, args):
             for future, relay in futures.items():
                 if relay not in completed and relay not in dead:
                     log.warning("TIMEOUT %s: alive check exceeded global deadline", relay)
-                    dead.add(relay)
+                    dead[relay] = "timeout"
                     future.cancel()
 
     alive = [r for r in relays if r not in dead]
     if dead:
         log.warning("%d relay(s) unreachable, skipping from matrix: %s", len(dead), ", ".join(dead))
+
+    # Update per-relay availability metric; remove labels for relays dropped from config
+    clear_stale_relay_labels(relays)
+    for r in relays:
+        remove_relay_available_labels(r)
+        reason = classify_alive_check_error(dead.get(r))
+        relay_available.labels(relay=r, reason=reason).set(0 if r in dead else 1)
+
     return alive
 
 
