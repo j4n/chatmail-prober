@@ -34,6 +34,19 @@ _app_log = logging.getLogger("chatmail_prober")
 AUTO_FETCH_URL = "https://chatmail.at/relays"
 
 
+class _SupprRpcClosedFilter(logging.Filter):
+    """Suppress 'RPC server closed' errors from deltachat_rpc_client event loop.
+
+    During shutdown, the event loop thread may try to read from the closed RPC
+    server and raise an error. This is expected and not actionable, so we filter
+    it out to avoid ugly exception logs at the root level during shutdown.
+    """
+    def filter(self, record):
+        if "RPC server closed" in str(record.getMessage()):
+            return False  # suppress
+        return True
+
+
 def _avg_ms(rtts_ms):
     return sum(rtts_ms) / len(rtts_ms) if rtts_ms else 0.0
 
@@ -442,6 +455,8 @@ def main(argv=None):
         level=logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # Suppress harmless "RPC server closed" errors from event loop during shutdown.
+    logging.getLogger().addFilter(_SupprRpcClosedFilter())
 
     # Our logger defaults to INFO so progress is always visible.
     # -v: DEBUG on chatmail_prober (verbose process detail)

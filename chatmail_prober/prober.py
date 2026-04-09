@@ -114,9 +114,10 @@ class RelayContext:
                 self.rpc.__exit__(None, None, None)
             except Exception as e:
                 log.warning("cleanup failed for %s: %s", self.relay, e)
-            self.rpc = None
-            self.dc = None
-            self.maker = None
+            finally:
+                self.rpc = None
+                self.dc = None
+                self.maker = None
 
     def __enter__(self):
         return self.open()
