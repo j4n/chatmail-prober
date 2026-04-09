@@ -294,7 +294,7 @@ def check_relays_alive(relays, args):
         deadline = args.timeout * (batches + 1)
         check_start = time.monotonic()
         timeout_at = time.time() + deadline
-        log.info(f"Starting alive scan of {len(relays)} relays with {actual_workers} workers, timeout at {time.strftime('%H:%M:%S', time.localtime(timeout_at))}")
+        log.warning(f"Starting alive scan of {len(relays)} relays with {actual_workers} workers, timeout at {time.strftime('%H:%M:%S', time.localtime(timeout_at))}")
         try:
             for future in as_completed(futures, timeout=deadline):
                 relay = futures[future]
@@ -330,7 +330,7 @@ def check_relays_alive(relays, args):
         relay_available.labels(relay=r, reason=reason).set(0 if r in dead else 1)
 
     elapsed = time.monotonic() - check_start
-    log.info(f"Completed alive check in {elapsed:.1f}s: {len(alive)}/{len(relays)} online")
+    log.warning(f"Completed alive check in {elapsed:.1f}s: {len(alive)}/{len(relays)} online")
 
     return alive
 
