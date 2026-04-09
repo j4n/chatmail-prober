@@ -366,9 +366,12 @@ def run_round(relays, args, executors, worker_pools, shutdown_event=None,
     for i, pair in enumerate(pairs):
         worker_pairs[i % args.workers].append(pair)
 
+    # Capture per-worker relay contexts so we can update them if a relay is reopened
+    worker_relay_contexts = {}
     all_futures = {}
     for worker_id, executor in enumerate(executors):
         relay_contexts = worker_pools[worker_id].contexts()
+        worker_relay_contexts[worker_id] = relay_contexts
         for src, dst in worker_pairs[worker_id]:
             try:
                 future = executor.submit(
@@ -411,6 +414,9 @@ def run_round(relays, args, executors, worker_pools, shutdown_event=None,
                 for relay in (src, dst):
                     try:
                         pool.reopen(relay)
+                        # Update the captured relay_contexts dict so other running probes
+                        # in this worker see the freshly reopened context, not the old closed one.
+                        worker_relay_contexts[worker_id].update(pool.contexts())
                     except Exception as reopen_err:
                         log.warning("Failed to reopen %s: %s", relay, reopen_err)
         else:
