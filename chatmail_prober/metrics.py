@@ -91,10 +91,14 @@ round_duration_seconds = Gauge(
     registry=CMPING_REGISTRY,
 )
 
-relay_available = Gauge(
-    "cmping_relay_available",
-    "Whether the relay passed the pre-flight alive check this round (1 = up, 0 = down)",
-    ["relay", "reason"],
+relay_status = Gauge(
+    "cmping_relay_status",
+    (
+        "Relay availability status from alive checks. Integer encodes state: "
+        "1=online, 0=unknown, -1=timeout, -2=setup, -3=auth, "
+        "-4=tls, -5=connection_refused, -6=dns. Label: relay."
+    ),
+    ["relay"],
     registry=CMPING_REGISTRY,
 )
 
@@ -121,47 +125,58 @@ def clear_stale_labels(active_relays):
                 metric.remove(*label_values)
 
 
-def classify_alive_check_error(error_str):
-    """Classify an alive-check error string into a fixed category."""
+def relay_status_value(error_str):
+    """Map alive-check error string to cmping_relay_status integer.
+
+    Return values:
+        1  = ok (no error)
+        0  = unknown error
+       -1  = timeout / deadline exceeded
+       -2  = setup failure (account creation)
+       -3  = auth failure
+       -4  = TLS / certificate error
+       -5  = connection refused
+       -6  = DNS resolution failure
+    """
     if error_str is None:
-        return "ok"
+        return 1
     lower = error_str.lower()
     if "timeout" in lower or "timed out" in lower or "deadline" in lower:
-        return "timeout"
+        return -1
     if "connection refused" in lower or "connectionrefusederror" in lower:
-        return "connection_refused"
+        return -5
     if ("name or service not known" in lower or "getaddrinfo" in lower
             or "dns resolution" in lower or "no such host" in lower
             or "nxdomain" in lower):
-        return "dns"
+        return -6
     if "ssl" in lower or "certificate" in lower:
-        return "tls"
+        return -4
     if "auth" in lower or "authentication" in lower:
-        return "auth"
+        return -3
     if "failed to setup" in lower:
-        return "setup"
-    return "unknown"
+        return -2
+    return 0
+
+
+def classify_alive_check_error(error_str):
+    """Deprecated: use relay_status_value() instead. Map error to string reason.
+
+    Kept for backwards compatibility with dashboard metric queries that expect string reasons.
+    """
+    value = relay_status_value(error_str)
+    mapping = {
+        1: "ok", 0: "unknown", -1: "timeout", -2: "setup",
+        -3: "auth", -4: "tls", -5: "connection_refused", -6: "dns"
+    }
+    return mapping.get(value, "unknown")
 
 
 def clear_stale_relay_labels(configured_relays):
-    """Remove relay_available label sets for relays no longer in the configured list."""
+    """Remove relay_status label sets for relays no longer in the configured list."""
     active = set(configured_relays)
-    for label_values in list(relay_available._metrics.keys()):
-        relay, _reason = label_values
+    for (relay,) in list(relay_status._metrics.keys()):
         if relay not in active:
-            relay_available.remove(*label_values)
-
-
-def remove_relay_available_labels(relay):
-    """Remove all relay_available label sets for a given relay.
-
-    Called before setting a new value so that stale reason labels
-    from a previous round do not linger.
-    """
-    for label_values in list(relay_available._metrics.keys()):
-        r, _reason = label_values
-        if r == relay:
-            relay_available.remove(*label_values)
+            relay_status.remove(relay)
 
 
 def update_metrics(result):

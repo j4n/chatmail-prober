@@ -38,8 +38,8 @@ def _fresh_metrics(monkeypatch):
         "account_setup_seconds": metrics_mod.Gauge(
             "cmping_account_setup_seconds_test", "test", labels, registry=registry,
         ),
-        "relay_available": metrics_mod.Gauge(
-            "cmping_relay_available_test", "test", ["relay", "reason"], registry=registry,
+        "relay_status": metrics_mod.Gauge(
+            "cmping_relay_status_test", "test", ["relay"], registry=registry,
         ),
     }
     for name, metric in new.items():
@@ -199,68 +199,45 @@ class TestClearStaleLabels:
 
 class TestClearStaleRelayLabels:
     def test_removes_labels_for_unconfigured_relay(self):
-        metrics_mod.relay_available.labels(relay="a.example", reason="ok").set(1)
-        metrics_mod.relay_available.labels(relay="b.example", reason="ok").set(1)
+        metrics_mod.relay_status.labels(relay="a.example").set(1)
+        metrics_mod.relay_status.labels(relay="b.example").set(1)
 
         metrics_mod.clear_stale_relay_labels(["a.example"])
 
-        assert ("a.example", "ok") in metrics_mod.relay_available._metrics
-        assert ("b.example", "ok") not in metrics_mod.relay_available._metrics
+        assert ("a.example",) in metrics_mod.relay_status._metrics
+        assert ("b.example",) not in metrics_mod.relay_status._metrics
 
     def test_keeps_all_configured_relays(self):
         relays = ["a.example", "b.example", "c.example"]
         for r in relays:
-            metrics_mod.relay_available.labels(relay=r, reason="ok").set(1)
+            metrics_mod.relay_status.labels(relay=r).set(1)
 
         metrics_mod.clear_stale_relay_labels(relays)
 
         for r in relays:
-            assert (r, "ok") in metrics_mod.relay_available._metrics
+            assert (r,) in metrics_mod.relay_status._metrics
 
     def test_noop_when_no_labels_exist(self):
         # Should not raise when metric has no label sets yet
         metrics_mod.clear_stale_relay_labels(["a.example"])
 
 
-class TestRemoveRelayAvailableLabels:
-    def test_removes_all_reason_labels_for_relay(self):
-        metrics_mod.relay_available.labels(relay="a.example", reason="ok").set(1)
-        metrics_mod.relay_available.labels(relay="a.example", reason="timeout").set(0)
-        metrics_mod.relay_available.labels(relay="b.example", reason="ok").set(1)
+class TestRelayStatusMetric:
+    def test_online_relay_set_to_one(self):
+        metrics_mod.relay_status.labels(relay="a.example").set(1)
+        assert metrics_mod.relay_status.labels(relay="a.example")._value.get() == 1.0
 
-        metrics_mod.remove_relay_available_labels("a.example")
+    def test_dead_relay_set_to_negative_value(self):
+        metrics_mod.relay_status.labels(relay="a.example").set(-1)
+        assert metrics_mod.relay_status.labels(relay="a.example")._value.get() == -1.0
 
-        assert ("a.example", "ok") not in metrics_mod.relay_available._metrics
-        assert ("a.example", "timeout") not in metrics_mod.relay_available._metrics
-        assert ("b.example", "ok") in metrics_mod.relay_available._metrics
-
-    def test_noop_when_relay_not_present(self):
-        metrics_mod.remove_relay_available_labels("nonexistent.example")
-
-
-class TestRelayAvailableMetric:
-    def test_alive_relay_set_to_one_with_reason_ok(self):
-        metrics_mod.relay_available.labels(relay="a.example", reason="ok").set(1)
-        assert metrics_mod.relay_available.labels(
-            relay="a.example", reason="ok")._value.get() == 1.0
-
-    def test_dead_relay_set_to_zero_with_reason(self):
-        metrics_mod.relay_available.labels(relay="a.example", reason="timeout").set(0)
-        assert metrics_mod.relay_available.labels(
-            relay="a.example", reason="timeout")._value.get() == 0.0
-
-    def test_reason_changes_between_rounds(self):
-        # Round 1: relay is down with timeout
-        metrics_mod.relay_available.labels(relay="a.example", reason="timeout").set(0)
-        assert ("a.example", "timeout") in metrics_mod.relay_available._metrics
-
-        # Round 2: clear old labels, relay comes back
-        metrics_mod.remove_relay_available_labels("a.example")
-        metrics_mod.relay_available.labels(relay="a.example", reason="ok").set(1)
-
-        assert ("a.example", "timeout") not in metrics_mod.relay_available._metrics
-        assert metrics_mod.relay_available.labels(
-            relay="a.example", reason="ok")._value.get() == 1.0
+    def test_relay_status_value_encoding(self):
+        # Test integer encoding for different failure modes
+        assert metrics_mod.relay_status_value(None) == 1  # ok
+        assert metrics_mod.relay_status_value("timeout") == -1
+        assert metrics_mod.relay_status_value("connection refused") == -5
+        assert metrics_mod.relay_status_value("name or service not known") == -6  # DNS fail
+        assert metrics_mod.relay_status_value("unknown error") == 0
 
 
 class TestClassifyAliveCheckError:

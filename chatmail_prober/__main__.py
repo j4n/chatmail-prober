@@ -21,8 +21,8 @@ from concurrent.futures import (
 from pathlib import Path
 
 from .metrics import (
-    classify_alive_check_error, clear_stale_labels, clear_stale_relay_labels,
-    last_round_timestamp, relay_available, remove_relay_available_labels,
+    clear_stale_labels, clear_stale_relay_labels,
+    last_round_timestamp, relay_status, relay_status_value,
     round_duration_seconds, update_metrics,
 )
 from .output import start_exporter_server, write_textfile
@@ -339,12 +339,10 @@ def check_relays_alive(relays, args):
     if dead:
         log.warning("%d relay(s) unreachable, skipping from matrix: %s", len(dead), ", ".join(dead))
 
-    # Update per-relay availability metric; remove labels for relays dropped from config
+    # Update per-relay status metric; remove labels for relays dropped from config
     clear_stale_relay_labels(relays)
     for r in relays:
-        remove_relay_available_labels(r)
-        reason = classify_alive_check_error(dead.get(r))
-        relay_available.labels(relay=r, reason=reason).set(0 if r in dead else 1)
+        relay_status.labels(relay=r).set(relay_status_value(dead.get(r)))
 
     elapsed = time.monotonic() - check_start
     log.warning(f"Completed alive check in {elapsed:.1f}s: {len(alive)}/{len(relays)} online")
