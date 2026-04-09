@@ -398,6 +398,7 @@ def run_round(relays, args, executors, worker_pools, shutdown_event=None,
             all_futures[future] = (src, dst, worker_id)
 
     completed = 0
+    failed = 0
     for future in as_completed(all_futures):
         if shutdown_event and shutdown_event.is_set():
             break
@@ -414,6 +415,7 @@ def run_round(relays, args, executors, worker_pools, shutdown_event=None,
             if textfile:
                 write_textfile(textfile)
         if result.error:
+            failed += 1
             log.warning(
                 "[%d/%d] src=%s dst=%s error=%s",
                 completed, len(pairs), src, dst, result.error,
@@ -442,7 +444,10 @@ def run_round(relays, args, executors, worker_pools, shutdown_event=None,
     elapsed = time.time() - round_start
     last_round_timestamp.set(time.time())
     round_duration_seconds.set(elapsed)
-    log.info("Probe round complete in %.1fs", elapsed)
+    success_count = completed - failed
+    success_rate = 100.0 * success_count / completed if completed > 0 else 0.0
+    avg_ms_per_pair = int(elapsed * 1000 / completed) if completed > 0 else 0
+    log.warning(f"Probe round complete: {success_count}/{completed} pairs succeeded ({success_rate:.1f}%), {avg_ms_per_pair}ms/pair, {elapsed:.1f}s total")
     return elapsed
 
 
