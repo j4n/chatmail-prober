@@ -279,7 +279,6 @@ def check_relays_alive(relays, args):
     Returns the list of relays that succeeded, in original order.
     Dead relays are logged as warnings and excluded from the matrix.
     """
-    log.info("Checking %d relays with self-probe...", len(relays))
     cache_dir = Path(args.cache_dir).expanduser()
 
     with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
@@ -294,6 +293,8 @@ def check_relays_alive(relays, args):
         batches = -(-len(relays) // actual_workers)  # ceil division
         deadline = args.timeout * (batches + 1)
         check_start = time.monotonic()
+        timeout_at = time.time() + deadline
+        log.info(f"Starting alive scan of {len(relays)} relays with {actual_workers} workers, timeout at {time.strftime('%H:%M:%S', time.localtime(timeout_at))}")
         try:
             for future in as_completed(futures, timeout=deadline):
                 relay = futures[future]
@@ -327,6 +328,9 @@ def check_relays_alive(relays, args):
         remove_relay_available_labels(r)
         reason = classify_alive_check_error(dead.get(r))
         relay_available.labels(relay=r, reason=reason).set(0 if r in dead else 1)
+
+    elapsed = time.monotonic() - check_start
+    log.info(f"Completed alive check in {elapsed:.1f}s: {len(alive)}/{len(relays)} online")
 
     return alive
 
