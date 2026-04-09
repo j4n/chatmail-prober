@@ -558,8 +558,9 @@ def main(argv=None):
     relays = check_relays_alive(all_relays, args)
     if not relays:
         raise SystemExit("No reachable relays -- aborting")
-    log.info("%d relay(s) alive, starting matrix probe", len(relays))
+    log.info(f"continuing with {len(relays)}/{len(all_relays)} relays online, starting matrix probe")
     last_alive_check = time.monotonic()
+    log.info(f"next alive check in {args.alive_check_interval}s")
 
     if args.port:
         start_exporter_server(args.port)
@@ -578,6 +579,7 @@ def main(argv=None):
             if interval == 0 or time.monotonic() - last_alive_check >= interval:
                 relays = check_relays_alive(all_relays, args)
                 last_alive_check = time.monotonic()
+                log.info(f"continuing with {len(relays)}/{len(all_relays)} relays online, next check in {interval}s")
 
             elapsed = run_round(relays, args, executors, worker_pools,
                                 shutdown_event,
