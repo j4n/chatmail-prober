@@ -1,4 +1,59 @@
 {
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__elements": {},
+  "__requires": [
+    {
+      "type": "panel",
+      "id": "esnet-matrix-panel",
+      "name": "ESnet Matrix Panel",
+      "version": "2.0.2"
+    },
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.4.2"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    },
+    {
+      "type": "panel",
+      "id": "stat",
+      "name": "Stat",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "state-timeline",
+      "name": "State timeline",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "table",
+      "name": "Table",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
+    }
+  ],
   "annotations": {
     "list": [
       {
@@ -19,13 +74,13 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "id": 74,
+  "id": null,
   "links": [],
   "panels": [
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -91,7 +146,11 @@
         {
           "expr": "avg(cmping_rtt_median_seconds{probe_type=\"cross\"})",
           "legendFormat": "median",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Median RTT (all pairs)",
@@ -100,7 +159,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -145,7 +204,11 @@
         {
           "expr": "count(cmping_probe_loss_ratio{probe_type=\"cross\"})",
           "legendFormat": "pairs",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Total Pairs Monitored",
@@ -154,7 +217,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -204,7 +267,11 @@
         {
           "expr": "count(cmping_probe_loss_ratio{probe_type=\"cross\"} > 0) or vector(0)",
           "legendFormat": "failed",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Failed Pairs",
@@ -213,7 +280,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -269,7 +336,11 @@
         {
           "expr": "count(cmping_probe_loss_ratio{probe_type=\"cross\"} == 0) / count(cmping_probe_loss_ratio{probe_type=\"cross\"})",
           "legendFormat": "success rate",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Pairs OK / Total",
@@ -290,7 +361,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "${DS_PROMETHEUS}"
       },
       "description": "Median RTT per (source, destination) pair. Green = fast, yellow = >24s, red = >48s. Failed pairs show no data (red null color).",
       "fieldConfig": {
@@ -313,7 +384,7 @@
               },
               {
                 "color": "yellow",
-                "value": 24
+                "value": 10
               },
               {
                 "color": "red",
@@ -343,65 +414,110 @@
         ]
       },
       "gridPos": {
-        "h": 20,
-        "w": 9,
+        "h": 24,
+        "w": 12,
         "x": 0,
         "y": 5
       },
-      "id": 6,
+      "id": 25,
       "options": {
-        "addUrl": false,
+        "addUrl": true,
+        "aggregation": "mean",
+        "animationRange": "3h",
+        "animationSpeedMs": 1000,
         "cellPadding": 10,
         "cellSize": 18,
+        "colCategoryGap": 4,
+        "colCategoryHeaderHeight": 100,
         "defaultColor": "#d44a3a",
+        "enableColGrouping": false,
+        "enableRowGrouping": false,
         "extraTooltipFields": "Loss,p10,p90",
         "fitToPanel": true,
         "inputList": false,
         "legendType": "range",
         "nullColor": "#d44a3a",
+        "rowCategoryGap": 4,
+        "rowCategoryHeaderWidth": 100,
         "showLegend": true,
+        "showPlaybackBar": true,
+        "sortType": "natural-asc",
         "sourceField": "destination",
         "sourceText": "From",
+        "stepInterval": "60m",
         "targetField": "source",
         "targetText": "To",
+        "timeMode": "timelapse",
         "txtLength": 18,
-        "txtSize": 12,
+        "txtSize": 10,
+        "url": "/d/chatmail-single/relay-network3a-single-relay?",
+        "urlVar1": "relay",
+        "urlVar2": "peer",
         "valueField": "Value",
         "valueText": "Value"
       },
+      "pluginVersion": "2.0.2",
       "targets": [
         {
-          "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "avg_over_time(cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\"}[$__range])",
           "format": "table",
           "instant": true,
+          "range": false,
           "refId": "A"
         },
         {
-          "expr": "cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "avg_over_time(cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\"}[$__range])",
           "format": "table",
           "instant": true,
+          "range": false,
           "refId": "B"
         },
         {
-          "expr": "cmping_rtt_p10_seconds{source=~\"$source\", destination=~\"$destination\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "avg_over_time(cmping_rtt_p10_seconds{source=~\"$source\", destination=~\"$destination\"}[$__range])",
           "format": "table",
           "instant": true,
+          "range": false,
           "refId": "C"
         },
         {
-          "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "avg_over_time(cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\"}[$__range])",
           "format": "table",
           "instant": true,
+          "range": false,
           "refId": "D"
         }
       ],
-      "title": "RTT Matrix",
+      "title": "RTT Matrix (Average over Range)",
       "type": "esnet-matrix-panel"
     },
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "${DS_PROMETHEUS}"
       },
       "description": "All cross-relay pairs with current probe status, median RTT, and p90 RTT.",
       "fieldConfig": {
@@ -592,9 +708,9 @@
         ]
       },
       "gridPos": {
-        "h": 20,
-        "w": 15,
-        "x": 9,
+        "h": 24,
+        "w": 12,
+        "x": 12,
         "y": 5
       },
       "id": 7,
@@ -622,25 +738,41 @@
           "expr": "cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true,
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         },
         {
           "expr": "cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true,
-          "refId": "B"
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         },
         {
           "expr": "cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true,
-          "refId": "C"
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         },
         {
           "expr": "cmping_rtt_p10_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true,
-          "refId": "D"
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Probe Results",
@@ -738,7 +870,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 25
+        "y": 29
       },
       "id": 8,
       "title": "Probe Status",
@@ -747,7 +879,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "${DS_PROMETHEUS}"
       },
       "description": "Average outbound loss per source host (avg over all destinations). Green=no loss, yellow=>10%, red=>20%.",
       "fieldConfig": {
@@ -791,7 +923,7 @@
         "h": 16,
         "w": 12,
         "x": 0,
-        "y": 26
+        "y": 30
       },
       "id": 9,
       "options": {
@@ -813,7 +945,11 @@
         {
           "expr": "avg by (source) (cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
           "legendFormat": "{{source}}",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Outbound Loss (avg over destinations)",
@@ -822,7 +958,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "${DS_PROMETHEUS}"
       },
       "description": "Average inbound loss per destination host (avg over all sources). Green=no loss, yellow=>10%, red=>20%.",
       "fieldConfig": {
@@ -866,7 +1002,7 @@
         "h": 16,
         "w": 12,
         "x": 12,
-        "y": 26
+        "y": 30
       },
       "id": 17,
       "options": {
@@ -888,7 +1024,11 @@
         {
           "expr": "avg by (destination) (cmping_probe_loss_ratio{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
           "legendFormat": "{{destination}}",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Inbound Loss (avg over sources)",
@@ -900,7 +1040,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 46
       },
       "id": 22,
       "panels": [],
@@ -910,7 +1050,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1050,7 +1190,7 @@
         "h": 12,
         "w": 12,
         "x": 0,
-        "y": 43
+        "y": 47
       },
       "id": 20,
       "options": {
@@ -1071,17 +1211,29 @@
         {
           "expr": "avg by(source)(cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
           "legendFormat": "{{source}}",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         },
         {
           "expr": "avg(cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
           "legendFormat": "p90",
-          "refId": "B"
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         },
         {
           "expr": "avg(cmping_rtt_p10_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
           "legendFormat": "p10",
-          "refId": "C"
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Outbound RTT (avg to all destinations)",
@@ -1090,7 +1242,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1230,7 +1382,7 @@
         "h": 12,
         "w": 12,
         "x": 12,
-        "y": 43
+        "y": 47
       },
       "id": 21,
       "options": {
@@ -1251,17 +1403,29 @@
         {
           "expr": "avg by(destination)(cmping_rtt_median_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
           "legendFormat": "{{destination}}",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         },
         {
           "expr": "avg(cmping_rtt_p90_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
           "legendFormat": "p90",
-          "refId": "B"
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         },
         {
           "expr": "avg(cmping_rtt_p10_seconds{source=~\"$source\", destination=~\"$destination\", probe_type=\"cross\"})",
           "legendFormat": "p10",
-          "refId": "C"
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Inbound RTT (avg from all sources)",
@@ -1273,7 +1437,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 59
       },
       "id": 14,
       "title": "Errors & Setup",
@@ -1282,7 +1446,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "${DS_PROMETHEUS}"
       },
       "description": "Account setup time per (source, destination) pair. Dark-green = fast (<2s), green = <6s, light-green = <24s, yellow = <48s, red = <60s, dark-red = timeout.",
       "fieldConfig": {
@@ -1321,14 +1485,14 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 20,
+        "h": 22,
         "w": 12,
         "x": 0,
-        "y": 56
+        "y": 60
       },
       "id": 23,
       "options": {
-        "addUrl": false,
+        "addUrl": true,
         "cellPadding": 10,
         "cellSize": 18,
         "defaultColor": "#d44a3a",
@@ -1338,21 +1502,30 @@
         "legendType": "range",
         "nullColor": "#d44a3a",
         "showLegend": true,
+        "sortType": "natural-asc",
         "sourceField": "destination",
         "sourceText": "From",
         "targetField": "source",
         "targetText": "To",
         "txtLength": 18,
         "txtSize": 12,
+        "url": "/d/chatmail-single/relay-network3a-single-relay?",
+        "urlVar1": "relay",
+        "urlVar2": "peer",
         "valueField": "Value",
         "valueText": "Setup time"
       },
+      "pluginVersion": "2.0.2",
       "targets": [
         {
           "expr": "cmping_account_setup_seconds{source=~\"$source\", destination=~\"$destination\"}",
           "format": "table",
           "instant": true,
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Account Setup Time",
@@ -1361,7 +1534,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1421,7 +1594,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 56
+        "y": 60
       },
       "id": 24,
       "options": {
@@ -1440,7 +1613,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "fdiuq9rm0h91ce"
+            "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
           "expr": "cmping_account_setup_seconds{probe_type=\"self\"}",
@@ -1456,7 +1629,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "${DS_PROMETHEUS}"
       },
       "description": "Send error rate per source (sum over destinations). Green=no errors, yellow=rare, orange=frequent, red=high.",
       "fieldConfig": {
@@ -1504,7 +1677,7 @@
         "h": 11,
         "w": 11,
         "x": 12,
-        "y": 64
+        "y": 68
       },
       "id": 19,
       "options": {
@@ -1526,7 +1699,11 @@
         {
           "expr": "sum by (source) (rate(cmping_send_errors_total{source=~\"$source\", destination=~\"$destination\"}[5m]))",
           "legendFormat": "{{source}}",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Send Errors (rate per source)",
@@ -1558,14 +1735,10 @@
         "type": "datasource"
       },
       {
-        "current": {
-          "selected": false,
-          "text": "All",
-          "value": "$__all"
-        },
+        "current": {},
         "datasource": {
           "type": "prometheus",
-          "uid": "${datasource}"
+          "uid": "${DS_PROMETHEUS}"
         },
         "definition": "",
         "hide": 0,
@@ -1582,14 +1755,10 @@
         "type": "query"
       },
       {
-        "current": {
-          "selected": false,
-          "text": "All",
-          "value": "$__all"
-        },
+        "current": {},
         "datasource": {
           "type": "prometheus",
-          "uid": "${datasource}"
+          "uid": "${DS_PROMETHEUS}"
         },
         "definition": "",
         "hide": 0,
@@ -1614,6 +1783,6 @@
   "timezone": "browser",
   "title": "Relay Network: Interoperability Cross-relay",
   "uid": "chatmail-inter",
-  "version": 5,
+  "version": 25,
   "weekStart": ""
 }
