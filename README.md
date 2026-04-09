@@ -129,6 +129,8 @@ to W*N account directories and W*N rpc-server processes.
 Before starting the matrix, chatmail-prober runs a single self-probe on each relay in
 parallel. Dead relays are excluded with a warning rather than failing the whole run.
 This means a TLS outage on one relay does not invalidate an entire round.
+Alive checks use half the normal `--timeout` per probe since a self-probe is lighter
+than a cross-relay pair.
 
 This can be invoked standalone with `--scan` to print a list ranked by RTT.
 

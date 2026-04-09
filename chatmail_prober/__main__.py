@@ -13,7 +13,11 @@ import signal
 import subprocess
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    TimeoutError as FuturesTimeoutError,
+    as_completed,
+)
 from pathlib import Path
 
 from .metrics import (
@@ -284,7 +288,7 @@ def check_relays_alive(relays, args):
     with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
         futures = {
             pool.submit(run_probe, r, r, 1, args.ping_interval,
-                        str(cache_dir / "alive-check" / r), args.timeout): r
+                        str(cache_dir / "alive-check" / r), args.timeout // 2): r
             for r in relays
         }
         dead = {}  # relay -> error string
@@ -310,7 +314,7 @@ def check_relays_alive(relays, args):
                     names = ", ".join(remaining[:5])
                     suffix = "..." if len(remaining) > 5 else ""
                     log.info("  %d remaining: %s%s", len(remaining), names, suffix)
-        except TimeoutError:
+        except FuturesTimeoutError:
             elapsed = time.monotonic() - check_start
             for future, relay in futures.items():
                 if relay not in completed and relay not in dead:
