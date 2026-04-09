@@ -253,14 +253,18 @@ class Pinger:
 
     def send_pings(self):
         """Send ping messages to the 1:1 chat at regular intervals."""
-        for seq in range(self.count):
-            if self.deadline is not None and time.time() >= self.deadline:
-                break
-            text = f"{self.tx} {time.time():.4f} {seq:17}"
-            self.chat.send_text(text)
-            self.sent += 1
-            time.sleep(self.interval)
-        self._stop_event.set()
+        try:
+            for seq in range(self.count):
+                if self.deadline is not None and time.time() >= self.deadline:
+                    break
+                text = f"{self.tx} {time.time():.4f} {seq:17}"
+                self.chat.send_text(text)
+                self.sent += 1
+                time.sleep(self.interval)
+        except Exception as e:
+            log.warning("send_pings error on %s -> %s: %s", self.relay1, self.relay2, e)
+        finally:
+            self._stop_event.set()
 
     def receive(self):
         """Receive ping messages from the single receiver.
@@ -319,8 +323,14 @@ def _perform_direct_ping(relay_contexts, source, dest, count, interval, timeout)
     Returns:
         Pinger with results populated.
     """
-    sender_maker = relay_contexts[source].maker
-    receiver_maker = relay_contexts[dest].maker
+    sender_ctx = relay_contexts[source]
+    receiver_ctx = relay_contexts[dest]
+    if sender_ctx.maker is None:
+        raise PingError(f"Relay context for {source} is closed (being reopened)")
+    if receiver_ctx.maker is None:
+        raise PingError(f"Relay context for {dest} is closed (being reopened)")
+    sender_maker = sender_ctx.maker
+    receiver_maker = receiver_ctx.maker
 
     account_setup_start = time.time()
 

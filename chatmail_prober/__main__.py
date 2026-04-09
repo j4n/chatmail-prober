@@ -35,15 +35,21 @@ AUTO_FETCH_URL = "https://chatmail.at/relays"
 
 
 class _SupprRpcClosedFilter(logging.Filter):
-    """Suppress 'RPC server closed' errors from deltachat_rpc_client event loop.
+    """Suppress 'RPC server closed' errors during shutdown only.
 
     During shutdown, the event loop thread may try to read from the closed RPC
     server and raise an error. This is expected and not actionable, so we filter
-    it out to avoid ugly exception logs at the root level during shutdown.
+    it out. During normal operation these errors indicate real RPC crashes and
+    should be visible for diagnostics.
     """
+    def __init__(self, shutdown_event):
+        super().__init__()
+        self._shutdown_event = shutdown_event
+
     def filter(self, record):
-        if "RPC server closed" in str(record.getMessage()):
-            return False  # suppress
+        if (self._shutdown_event.is_set()
+                and "RPC server closed" in str(record.getMessage())):
+            return False  # suppress during shutdown
         return True
 
 
@@ -397,6 +403,8 @@ def run_round(relays, args, executors, worker_pools, shutdown_event=None,
 
     completed = 0
     failed = 0
+    reopen_count = {}  # relay -> number of reopens this round
+    _reopen_limit = 3
     for future in as_completed(all_futures):
         if shutdown_event and shutdown_event.is_set():
             break
@@ -420,13 +428,19 @@ def run_round(relays, args, executors, worker_pools, shutdown_event=None,
             )
             # Reopen contexts for relays involved in RPC-level failures
             # so subsequent probes can recover.
-            _rpc_keywords = ("BrokenPipe", "ConnectionReset", "rpc",
-                             "EOFError", "dead", "process")
+            _rpc_keywords = ("BrokenPipe", "ConnectionReset",
+                             "EOFError", "dead", "process",
+                             "rpc server closed", "rpc process")
             if any(kw.lower() in result.error.lower() for kw in _rpc_keywords):
                 pool = worker_pools[worker_id]
                 for relay in (src, dst):
+                    prior = reopen_count.get(relay, 0)
+                    if prior >= _reopen_limit:
+                        log.debug("skipping reopen for %s (already reopened %d times)", relay, prior)
+                        continue
                     try:
                         pool.reopen(relay)
+                        reopen_count[relay] = prior + 1
                         # Update the captured relay_contexts dict so other running probes
                         # in this worker see the freshly reopened context, not the old closed one.
                         worker_relay_contexts[worker_id].update(pool.contexts())
@@ -458,8 +472,11 @@ def main(argv=None):
         level=logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # Created early so the log filter can reference it; also used by signal handlers.
+    shutdown_event = threading.Event()
+
     # Suppress harmless "RPC server closed" errors from event loop during shutdown.
-    logging.getLogger().addFilter(_SupprRpcClosedFilter())
+    logging.getLogger().addFilter(_SupprRpcClosedFilter(shutdown_event))
 
     # Our logger defaults to INFO so progress is always visible.
     # -v: DEBUG on chatmail_prober (verbose process detail)
@@ -530,7 +547,6 @@ def main(argv=None):
     # Graceful shutdown: first SIGINT/SIGTERM cancels pending work and kills
     # rpc-server subprocesses to unblock running probes; second kills immediately.
     # SIGUSR1 lets the current round finish, then exits cleanly.
-    shutdown_event = threading.Event()
     stop_after_round = threading.Event()
     sigint_count = 0
 

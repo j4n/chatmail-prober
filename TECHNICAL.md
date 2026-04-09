@@ -405,12 +405,12 @@ flowchart LR
         M6[cmping_probe_loss_ratio]
         M7[cmping_send_errors_total]
         M8[cmping_account_setup_seconds]
-        M9[cmping_relay_available]
+        M9[cmping_relay_status]
     end
 
     ALC["check_relays_alive()
-        set 1 (up) or 0 (down)
-        per configured relay"]
+        set integer status per relay
+        1=online, negative=error"]
 
     PR --> CHK
     CHK -->|yes| ERR
@@ -448,11 +448,13 @@ Per-pair metrics carry three labels:
 Round-level metrics (`cmping_last_round_completion_timestamp`,
 `cmping_round_duration_seconds`) have no labels.
 
-`cmping_relay_available` has `relay` and `reason` labels. It is set per
-configured relay in `check_relays_alive()`, not in `update_metrics()`.
-`reason` is `ok` for alive relays, or one of: `timeout`, `connection_refused`,
-`dns`, `tls`, `auth`, `setup`, `unknown` for dead ones. Old reason labels are removed
-each round before setting the new value.
+`cmping_relay_status` has a single `relay` label. It is set per configured
+relay in `check_relays_alive()`, not in `update_metrics()`. The integer
+value encodes both state and error category: 1=online, 0=unknown error,
+-1=timeout, -2=setup failure, -3=auth, -4=tls/cert, -5=connection refused,
+-6=dns. This stable series identity avoids the label-churn problem that
+occurred with the previous `cmping_relay_available` metric (which used a
+`reason` label whose value changed between rounds).
 
 ### Error behavior
 
@@ -752,8 +754,9 @@ The round time is roughly `ceil(N^2 / workers) * avg_probe_time`.
 
 **Handling**: The pre-flight `check_relays_alive()` runs a count=1 self-probe
 on every relay and excludes dead ones from the matrix for that round.
-Dead relays are exposed via `cmping_relay_available{relay="..."}=0` and also
-appear in `cmping_send_errors_total` and `cmping_probe_success=0`.
+Dead relays are exposed via `cmping_relay_status{relay="..."} < 1` (negative
+values encode the error category) and also appear in
+`cmping_send_errors_total` and `cmping_probe_success=0`.
 
 ### MemoryError / "can't start new thread"
 
