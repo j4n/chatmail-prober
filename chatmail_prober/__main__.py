@@ -116,6 +116,12 @@ def parse_args(argv=None):
         help="seconds between probe rounds (default: 900 = 15min)",
     )
     parser.add_argument(
+        "--alive-check-interval",
+        type=int,
+        default=86400,
+        help="seconds between relay alive re-checks (default: 86400 = 24h, 0 = every round)",
+    )
+    parser.add_argument(
         "--count",
         type=int,
         default=5,
@@ -130,8 +136,8 @@ def parse_args(argv=None):
     parser.add_argument(
         "--timeout",
         type=int,
-        default=60,
-        help="per-pair receive timeout in seconds (default: 60)",
+        default=90,
+        help="per-pair receive timeout in seconds (default: 90)",
     )
     parser.add_argument(
         "--workers",
@@ -284,8 +290,12 @@ def check_relays_alive(relays, args):
         }
         dead = {}  # relay -> error string
         completed = set()
+        actual_workers = min(len(relays), args.workers)
+        batches = -(-len(relays) // actual_workers)  # ceil division
+        deadline = args.timeout * (batches + 1)
+        check_start = time.monotonic()
         try:
-            for future in as_completed(futures, timeout=args.timeout * 2):
+            for future in as_completed(futures, timeout=deadline):
                 relay = futures[future]
                 completed.add(relay)
                 result = future.result()
@@ -300,9 +310,10 @@ def check_relays_alive(relays, args):
                     suffix = "..." if len(remaining) > 5 else ""
                     log.info("  %d remaining: %s%s", len(remaining), names, suffix)
         except TimeoutError:
+            elapsed = time.monotonic() - check_start
             for future, relay in futures.items():
                 if relay not in completed and relay not in dead:
-                    log.warning("TIMEOUT %s: alive check exceeded global deadline", relay)
+                    log.warning("TIMEOUT %s: alive check exceeded %.0fs deadline", relay, elapsed)
                     dead[relay] = "timeout"
                     future.cancel()
 
@@ -543,10 +554,12 @@ def main(argv=None):
 
     signal.signal(signal.SIGUSR2, _handle_usr2)
 
-    relays = check_relays_alive(relays, args)
+    all_relays = relays  # preserve full list for periodic re-checks
+    relays = check_relays_alive(all_relays, args)
     if not relays:
         raise SystemExit("No reachable relays -- aborting")
     log.info("%d relay(s) alive, starting matrix probe", len(relays))
+    last_alive_check = time.monotonic()
 
     if args.port:
         start_exporter_server(args.port)
@@ -560,6 +573,12 @@ def main(argv=None):
 
     try:
         while not shutdown_event.is_set():
+            # Periodically re-check which relays are alive
+            interval = args.alive_check_interval
+            if interval == 0 or time.monotonic() - last_alive_check >= interval:
+                relays = check_relays_alive(all_relays, args)
+                last_alive_check = time.monotonic()
+
             elapsed = run_round(relays, args, executors, worker_pools,
                                 shutdown_event,
                                 textfile=args.textfile, exclude=exclude)

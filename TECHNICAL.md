@@ -646,7 +646,7 @@ chatmail-prober [relays_file ...] [options]
 | `--interval` | `900` | Seconds between probe rounds |
 | `--count` | `5` | Pings per pair per round |
 | `--ping-interval` | `0.1` | Seconds between individual pings within a probe |
-| `--timeout` | `60` | Per-pair receive timeout in seconds |
+| `--timeout` | `90` | Per-pair receive timeout in seconds |
 | `--workers` | `5` | Concurrent worker threads |
 | `--cache-dir` | `~/.cache/chatmail-prober` | Root for per-worker account dirs |
 | `--reset` | false | Remove all account dirs, force fresh account creation |

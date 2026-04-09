@@ -57,7 +57,7 @@ RELAYS               Relay list file(s), one domain per line (positional arg)
 --interval SECS      Seconds between probe rounds (default: 900 = 15min)
 --count N            Pings per pair per round (default: 5)
 --ping-interval S    Seconds between pings within a probe (default: 0.1)
---timeout SECS       Per-pair receive timeout in seconds (default: 60)
+--timeout SECS       Per-pair receive timeout in seconds (default: 90)
 --workers N          Max concurrent probe threads (default: 5)
 --cache-dir PATH     Base dir for per-worker account directories (default: ~/.cache/chatmail-prober)
 --reset              Remove all account dirs, force fresh account creation
