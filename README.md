@@ -49,7 +49,7 @@ And look at `curl http://localhost:9740/metrics` to see the metrics.
 ```
 --auto-fetch PATH    fetch relay list from https://chatmail.at/relays and write
                      to PATH before starting
-RELAYS               Relay list file(s), one domain per line (positional arg)
+RELAYS               Relay list file(s), one domain per line, # comments (positional arg)
 --scan               Self-probe all relays, print ranked by RTT, then exit
 --top N              Number of fastest relays to highlight in --scan output (default: 10)
 --port PORT          HTTP listen port (default: off, e.g. --port 9740)

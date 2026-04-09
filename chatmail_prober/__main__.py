@@ -100,7 +100,7 @@ def parse_args(argv=None):
     parser.add_argument(
         "relays",
         nargs="*",
-        help="relay list file(s) (one domain per line); at least one of this or --auto-fetch required",
+        help="relay list file(s) (one domain per line, # comments); at least one of this or --auto-fetch required",
     )
     parser.add_argument(
         "--port",
