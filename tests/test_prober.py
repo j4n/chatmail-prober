@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from chatmail_prober.prober import (
-    run_probe, ProbeResult, RelayPool, PingError,
+    run_probe, ProbeResult, RelayPool, PingError, _is_fatal_error,
 )
 
 
@@ -206,3 +206,48 @@ class TestRelayPool:
         pool.open_all(["a.test"])
         pool.reopen("a.test")  # should not raise
         assert pool.contexts()["a.test"] is new_ctx
+
+
+class TestIsFatalError:
+    """Test _is_fatal_error() recognizes non-recoverable RPC errors."""
+
+    def test_dns_resolution(self):
+        assert _is_fatal_error(
+            "Could not find DNS resolutions for imap.chat.beeep.ir:993"
+        )
+
+    def test_dns_name_or_service(self):
+        assert _is_fatal_error("Name or service not known")
+
+    def test_dns_getaddrinfo(self):
+        assert _is_fatal_error("getaddrinfo failed for relay.example")
+
+    def test_dns_no_such_host(self):
+        assert _is_fatal_error("dial tcp: lookup relay.example: no such host")
+
+    def test_dns_nxdomain(self):
+        assert _is_fatal_error("NXDOMAIN error for imap.example")
+
+    def test_connection_refused(self):
+        assert _is_fatal_error("Connection refused")
+
+    def test_connection_refused_error(self):
+        assert _is_fatal_error("ConnectionRefusedError: [Errno 111]")
+
+    def test_certificate(self):
+        assert _is_fatal_error("certificate has expired")
+
+    def test_auth_failed(self):
+        assert _is_fatal_error(
+            "[AUTHENTICATIONFAILED] Authentication failed."
+        )
+
+    def test_transient_error_not_fatal(self):
+        assert not _is_fatal_error("temporary failure in name resolution")
+
+    def test_generic_error_not_fatal(self):
+        assert not _is_fatal_error("something went wrong")
+
+    def test_timeout_not_fatal(self):
+        # Timeouts are handled by the deadline, not by _is_fatal_error
+        assert not _is_fatal_error("Connection timed out")

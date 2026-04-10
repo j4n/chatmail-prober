@@ -44,6 +44,31 @@ class PingError(Exception):
     pass
 
 
+def _is_fatal_error(msg):
+    """Check if an RPC ERROR event message indicates a non-recoverable failure.
+
+    These errors will not resolve by waiting longer (DNS missing, port
+    filtered, auth rejected, bad cert), so wait_account_online() should
+    raise immediately instead of burning the full timeout.
+    """
+    lower = msg.lower()
+    # DNS resolution failure
+    if ("name or service not known" in lower or "getaddrinfo" in lower
+            or "dns resolution" in lower or "no such host" in lower
+            or "nxdomain" in lower):
+        return True
+    # Connection refused
+    if "connection refused" in lower or "connectionrefusederror" in lower:
+        return True
+    # TLS / certificate
+    if "certificate" in lower:
+        return True
+    # Auth failure
+    if "authenticationfailed" in lower:
+        return True
+    return False
+
+
 def is_ip_address(host):
     """Check if the given host is an IP address."""
     try:
@@ -150,6 +175,8 @@ class AccountMaker:
                 return
             elif event.kind == EventType.ERROR:
                 log.warning("ERROR during profile setup: %s", event.msg)
+                if _is_fatal_error(event.msg):
+                    raise PingError(event.msg)
 
     def wait_all_online(self, timeout=None):
         """Wait for all accounts in self.online to come online.
