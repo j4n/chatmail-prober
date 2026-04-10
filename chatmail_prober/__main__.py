@@ -317,7 +317,8 @@ def check_relays_alive(relays, args):
         deadline = args.timeout * (batches + 1)
         check_start = time.monotonic()
         timeout_at = time.time() + deadline
-        log.warning(f"Starting alive scan of {len(relays)} relays with {actual_workers} workers, timeout at {time.strftime('%H:%M:%S', time.localtime(timeout_at))}")
+        log.warning("Starting alive scan of %d relays with %d workers, timeout at %s",
+                     len(relays), actual_workers, time.strftime('%H:%M:%S', time.localtime(timeout_at)))
         try:
             for future in as_completed(futures, timeout=deadline):
                 relay = futures[future]
@@ -351,7 +352,7 @@ def check_relays_alive(relays, args):
         relay_status.labels(relay=r).set(relay_status_value(dead.get(r)))
 
     elapsed = time.monotonic() - check_start
-    log.warning(f"Completed alive check in {elapsed:.1f}s: {len(alive)}/{len(relays)} online")
+    log.warning("Completed alive check in %.1fs: %d/%d online", elapsed, len(alive), len(relays))
 
     return alive
 
@@ -459,7 +460,8 @@ def run_round(relays, args, executors, worker_pools, shutdown_event=None,
     success_count = completed - failed
     success_rate = 100.0 * success_count / completed if completed > 0 else 0.0
     avg_ms_per_pair = int(elapsed * 1000 / completed) if completed > 0 else 0
-    log.warning(f"Probe round complete: {success_count}/{completed} pairs succeeded ({success_rate:.1f}%), {avg_ms_per_pair}ms/pair, {elapsed:.1f}s total")
+    log.warning("Probe round complete: %d/%d pairs succeeded (%.1f%%), %dms/pair, %.1fs total",
+                 success_count, completed, success_rate, avg_ms_per_pair, elapsed)
     return elapsed
 
 
@@ -566,7 +568,7 @@ def main(argv=None):
 
     def _handle_usr1(signum, frame):
         stop_after_round.set()
-        log.info("SIGUSR1 received -- will exit after current round completes")
+        log.warn("SIGUSR1 received -- will exit after current round completes")
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -606,9 +608,9 @@ def main(argv=None):
     relays = check_relays_alive(all_relays, args)
     if not relays:
         raise SystemExit("No reachable relays -- aborting")
-    log.info(f"continuing with {len(relays)}/{len(all_relays)} relays online, starting matrix probe")
+    log.info("continuing with %d/%d relays online, starting matrix probe", len(relays), len(all_relays))
     last_alive_check = time.monotonic()
-    log.info(f"next alive check in {args.alive_check_interval}s")
+    log.info("next alive check in %ds", args.alive_check_interval)
 
     if args.port:
         start_exporter_server(args.port)
@@ -627,7 +629,7 @@ def main(argv=None):
             if interval == 0 or time.monotonic() - last_alive_check >= interval:
                 relays = check_relays_alive(all_relays, args)
                 last_alive_check = time.monotonic()
-                log.info(f"continuing with {len(relays)}/{len(all_relays)} relays online, next check in {interval}s")
+                log.info("continuing with %d/%d relays online, next check in %ds", len(relays), len(all_relays), interval)
 
             elapsed = run_round(relays, args, executors, worker_pools,
                                 shutdown_event,
