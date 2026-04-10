@@ -456,6 +456,13 @@ value encodes both state and error category: 1=online, 0=unknown error,
 occurred with the previous `cmping_relay_available` metric (which used a
 `reason` label whose value changed between rounds).
 
+DNS errors reported by the Delta Chat RPC are cross-checked via
+`verify_relay_status()`: when the RPC reports a DNS failure, the base domain
+and autoconfig subdomains (`imap.*`, `smtp.*`) are resolved with
+`socket.getaddrinfo()`. If the base domain resolves, the error is
+reclassified as -1 (timeout) rather than -6 (dns), since the actual cause
+is a filtered port or broken autoconfig, not a DNS problem.
+
 ### Error behavior
 
 On probe error, RTT gauges (median, p10, p90, stddev) and
@@ -752,9 +759,55 @@ The round time is roughly `ceil(N^2 / workers) * avg_probe_time`.
 
 **Symptom**: A relay is down but metrics still show last round's values.
 
-**Handling**: The pre-flight `check_relays_alive()` runs a count=1 self-probe
-on every relay and excludes dead ones from the matrix for that round.
-Dead relays are exposed via `cmping_relay_status{relay="..."} < 1` (negative
+**Handling**: The pre-flight `check_relays_alive()` applies a multi-stage
+classification to avoid both false negatives and wasted retries:
+
+```
+check_relays_alive(relays, args, previously_dead)
+    |
+    |  if --auto-fetch: re-fetch relay list from chatmail.at/relays
+    |
+    v
+[Probe all N relays in parallel, count=1, timeout/2]
+    |
+    v
+For each result:
+    |
+    +-- OK --------> include in matrix
+    |                 (if was in previously_dead: log "recovered")
+    |
+    +-- ERROR -----> classify via verify_relay_status()
+                       |
+                       +-- persistent (-3 auth, -4 tls,
+                       |   -5 refused, -6 genuine dns) --------> EXCLUDE
+                       |
+                       +-- transient (-1 timeout, 0 unknown)
+                           AND in previously_dead? ------------> EXCLUDE
+                           |                         (skip retry, already known dead;
+                           |                          initial probe detects recovery)
+                           |
+                           +-- transient, newly failing -------> RETRY
+                                                                   |
+                                                           [wait 5s, probe again]
+                                                           [up to 2 retries]
+                                                                   |
+                                                               +-- OK --> include
+                                                               +-- dead --> EXCLUDE
+
+Return (alive_list, dead_set)
+                       ^
+                       stored as previously_dead for next round
+```
+
+The transient/persistent classification uses `is_transient_alive_error()`
+which calls `verify_relay_status()` to distinguish false DNS errors
+(reclassified as timeout, retryable) from genuine ones.  Previously-dead
+relays still get the initial probe each round (so recovery is detected
+within one cycle) but skip the retry phase since retrying within the same
+window won't help a persistent outage.
+
+Dead relays after all retries are excluded from the matrix.
+They are exposed via `cmping_relay_status{relay="..."} < 1` (negative
 values encode the error category) and also appear in
 `cmping_send_errors_total` and `cmping_probe_success=0`.
 

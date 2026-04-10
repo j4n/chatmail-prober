@@ -22,8 +22,9 @@ from pathlib import Path
 
 from .metrics import (
     clear_stale_labels, clear_stale_relay_labels,
-    last_round_timestamp, relay_status, relay_status_value,
-    round_duration_seconds, update_metrics,
+    is_transient_alive_error, last_round_timestamp,
+    relay_status, relay_status_value,
+    round_duration_seconds, update_metrics, verify_relay_status,
 )
 from .output import start_exporter_server, write_textfile
 from .prober import ProbeResult, RelayPool, run_probe
@@ -296,12 +297,20 @@ def _kill_stale_rpc_servers(cache_dir, graceful=True):
         pass
 
 
-def check_relays_alive(relays, args):
+def check_relays_alive(relays, args, previously_dead=None):
     """Run a single self-probe (relay->itself, count=1) for each relay in parallel.
 
-    Returns the list of relays that succeeded, in original order.
+    Returns (alive, dead) where alive is the list of relays that succeeded
+    (in original order) and dead is a set of relay domains that failed.
     Dead relays are logged as warnings and excluded from the matrix.
+
+    Relays that fail with transient errors (timeout, unknown) are retried
+    up to 2 times -- unless they were already in previously_dead, meaning
+    they failed last round too and retrying within the same window is
+    unlikely to help.
     """
+    if previously_dead is None:
+        previously_dead = set()
     cache_dir = Path(args.cache_dir).expanduser()
 
     with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
@@ -342,19 +351,77 @@ def check_relays_alive(relays, args):
                     dead[relay] = "timeout"
                     future.cancel()
 
+    # Retry relays that failed with transient errors (timeout, unknown).
+    # Persistent errors (genuine DNS, auth, TLS, connection refused) are
+    # not retried since they won't resolve by waiting.  Relays that were
+    # already dead last round are also skipped -- if they didn't recover
+    # between rounds, retrying within the same window won't help.
+    max_retries = 2
+    retry_delay = 5
+    retryable = {r: err for r, err in dead.items()
+                 if r not in previously_dead
+                 and is_transient_alive_error(r, err)}
+    skipped = {r for r in dead if r in previously_dead
+               and is_transient_alive_error(r, dead[r])}
+    if skipped:
+        log.info("Skipping retries for %d previously-dead relay(s): %s",
+                 len(skipped), ", ".join(skipped))
+    if retryable:
+        log.warning("Retrying %d relay(s) with transient errors: %s",
+                     len(retryable), ", ".join(retryable))
+    for attempt in range(1, max_retries + 1):
+        if not retryable:
+            break
+        time.sleep(retry_delay)
+        log.info("Retry attempt %d/%d for %d relay(s)",
+                 attempt, max_retries, len(retryable))
+        with ThreadPoolExecutor(max_workers=min(len(retryable), args.workers)) as pool:
+            retry_futures = {
+                pool.submit(run_probe, r, r, 1, args.ping_interval,
+                            str(cache_dir / "alive-check" / r),
+                            args.timeout // 2): r
+                for r in retryable
+            }
+            try:
+                for future in as_completed(retry_futures, timeout=args.timeout * 2):
+                    relay = retry_futures[future]
+                    result = future.result()
+                    if result.error:
+                        log.warning("Retry %d/%d DEAD %s: %s",
+                                    attempt, max_retries, relay, result.error)
+                        dead[relay] = result.error
+                    else:
+                        log.warning("Retry %d/%d OK   %s (%.0fms)",
+                                    attempt, max_retries, relay,
+                                    result.rtts_ms[0] if result.rtts_ms else 0)
+                        del dead[relay]
+                        retryable.pop(relay, None)
+            except FuturesTimeoutError:
+                for future, relay in retry_futures.items():
+                    if relay in retryable and relay in dead:
+                        log.warning("Retry %d/%d TIMEOUT %s", attempt, max_retries, relay)
+        # Re-evaluate retryable with updated errors
+        retryable = {r: dead[r] for r in retryable
+                     if r in dead and is_transient_alive_error(r, dead[r])}
+
     alive = [r for r in relays if r not in dead]
+    dead_set = set(dead)
+    recovered = previously_dead - dead_set
+    if recovered:
+        log.warning("Recovered %d previously-dead relay(s): %s",
+                     len(recovered), ", ".join(recovered))
     if dead:
         log.warning("%d relay(s) unreachable, skipping from matrix: %s", len(dead), ", ".join(dead))
 
     # Update per-relay status metric; remove labels for relays dropped from config
     clear_stale_relay_labels(relays)
     for r in relays:
-        relay_status.labels(relay=r).set(relay_status_value(dead.get(r)))
+        relay_status.labels(relay=r).set(verify_relay_status(r, dead.get(r)))
 
     elapsed = time.monotonic() - check_start
     log.warning("Completed alive check in %.1fs: %d/%d online", elapsed, len(alive), len(relays))
 
-    return alive
+    return alive, dead_set
 
 
 def run_round(relays, args, executors, worker_pools, shutdown_event=None,
@@ -605,7 +672,8 @@ def main(argv=None):
     signal.signal(signal.SIGUSR2, _handle_usr2)
 
     all_relays = relays  # preserve full list for periodic re-checks
-    relays = check_relays_alive(all_relays, args)
+    previously_dead = set()
+    relays, previously_dead = check_relays_alive(all_relays, args)
     if not relays:
         raise SystemExit("No reachable relays -- aborting")
     log.info("continuing with %d/%d relays online, starting matrix probe", len(relays), len(all_relays))
@@ -627,7 +695,23 @@ def main(argv=None):
             # Periodically re-check which relays are alive
             interval = args.alive_check_interval
             if interval == 0 or time.monotonic() - last_alive_check >= interval:
-                relays = check_relays_alive(all_relays, args)
+                # Re-fetch relay list from URL if --auto-fetch is configured
+                if args.auto_fetch:
+                    try:
+                        fetch_relay_list(AUTO_FETCH_URL, args.auto_fetch)
+                        refreshed = read_relay_list(relay_files)
+                        if refreshed != all_relays:
+                            added = set(refreshed) - set(all_relays)
+                            removed = set(all_relays) - set(refreshed)
+                            if added:
+                                log.warning("Relay list: %d new: %s", len(added), ", ".join(added))
+                            if removed:
+                                log.warning("Relay list: %d removed: %s", len(removed), ", ".join(removed))
+                            all_relays = refreshed
+                    except Exception as e:
+                        log.warning("Failed to refresh relay list: %s", e)
+                relays, previously_dead = check_relays_alive(
+                    all_relays, args, previously_dead=previously_dead)
                 last_alive_check = time.monotonic()
                 log.info("continuing with %d/%d relays online, next check in %ds", len(relays), len(all_relays), interval)
 

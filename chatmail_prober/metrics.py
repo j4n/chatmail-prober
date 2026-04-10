@@ -1,6 +1,7 @@
 """Prometheus metric definitions and update logic."""
 
 import logging
+import socket
 import statistics
 
 from prometheus_client import (
@@ -156,6 +157,62 @@ def relay_status_value(error_str):
     if "failed to setup" in lower:
         return -2
     return 0
+
+
+def verify_relay_status(relay, error_str):
+    """Get relay status value with DNS cross-check.
+
+    Wraps relay_status_value() and corrects false DNS errors from the
+    Delta Chat RPC.  When the RPC reports a DNS failure, the actual cause
+    may be a missing imap.* subdomain because autoconfig was broken --
+    the relay host itself still resolves.  In that case the relay is
+    unreachable (timeout) rather than having a DNS problem.
+
+    Args:
+        relay: relay domain name (e.g. "chat.beeep.ir")
+        error_str: error string from the probe, or None if ok
+    """
+    value = relay_status_value(error_str)
+    if value != -6 or relay is None:
+        return value
+    # RPC says DNS failure -- verify by resolving the base domain.
+    try:
+        socket.getaddrinfo(relay, 993)
+    except socket.gaierror:
+        return -6  # genuine DNS failure: base domain does not resolve
+    # Base domain resolves -- check autoconfig subdomains for diagnostics.
+    missing = []
+    for sub in (f"imap.{relay}", f"smtp.{relay}"):
+        try:
+            socket.getaddrinfo(sub, None)
+        except socket.gaierror:
+            missing.append(sub)
+
+    if missing:
+        log.info(
+            "DNS cross-check: %s resolves but subdomain(s) %s missing "
+            "(broken autoconfig); reclassifying as timeout",
+            relay, ", ".join(missing),
+        )
+    else:
+        log.info(
+            "DNS cross-check: %s and subdomains all resolve but RPC "
+            "reported DNS error (port filtered?); reclassifying as timeout",
+            relay,
+        )
+    return -1
+
+
+def is_transient_alive_error(relay, error_str):
+    """Check if an alive-check error is transient and worth retrying.
+
+    Returns True for errors that might resolve on retry (timeouts,
+    reclassified DNS).  Returns False for persistent errors (genuine DNS,
+    auth, TLS, connection refused) that won't change with a retry.
+    """
+    status = verify_relay_status(relay, error_str)
+    # -1 (timeout) and 0 (unknown) are potentially transient
+    return status in (-1, 0)
 
 
 def classify_alive_check_error(error_str):

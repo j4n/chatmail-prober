@@ -1,5 +1,8 @@
 """Tests for Prometheus metric updates from ProbeResults."""
 
+import socket
+from unittest.mock import patch
+
 import pytest
 from prometheus_client import CollectorRegistry
 
@@ -300,3 +303,103 @@ class TestClassifyAliveCheckError:
 
     def test_unknown_fallback(self):
         assert metrics_mod.classify_alive_check_error("something unexpected") == "unknown"
+
+
+class TestVerifyRelayStatus:
+    @patch("chatmail_prober.metrics.socket.getaddrinfo")
+    def test_dns_error_reclassified_when_base_resolves(self, mock_gai):
+        mock_gai.return_value = [(2, 1, 6, "", ("1.2.3.4", 993))]
+        result = metrics_mod.verify_relay_status(
+            "chat.example",
+            "Could not find DNS resolutions for imap.chat.example:993",
+        )
+        assert result == -1
+
+    @patch("chatmail_prober.metrics.socket.getaddrinfo")
+    def test_dns_error_stays_when_base_fails(self, mock_gai):
+        mock_gai.side_effect = socket.gaierror("Name or service not known")
+        result = metrics_mod.verify_relay_status(
+            "dead.example", "Name or service not known"
+        )
+        assert result == -6
+
+    def test_non_dns_error_unchanged(self):
+        assert metrics_mod.verify_relay_status("a.example", "connection refused") == -5
+        assert metrics_mod.verify_relay_status("a.example", "timeout") == -1
+
+    def test_none_error_returns_ok(self):
+        assert metrics_mod.verify_relay_status("a.example", None) == 1
+
+    def test_none_relay_with_dns_error(self):
+        assert metrics_mod.verify_relay_status(
+            None, "Name or service not known"
+        ) == -6
+
+    @patch("chatmail_prober.metrics.socket.getaddrinfo")
+    def test_logs_missing_subdomains(self, mock_gai):
+        def side_effect(host, port):
+            if host == "chat.example":
+                return [(2, 1, 6, "", ("1.2.3.4", 993))]
+            if host == "imap.chat.example":
+                raise socket.gaierror("NXDOMAIN")
+            if host == "smtp.chat.example":
+                return [(2, 1, 6, "", ("1.2.3.5", 0))]
+            raise socket.gaierror("unexpected")
+        mock_gai.side_effect = side_effect
+        assert metrics_mod.verify_relay_status(
+            "chat.example", "Could not find DNS resolutions"
+        ) == -1
+
+    @patch("chatmail_prober.metrics.socket.getaddrinfo")
+    def test_both_subdomains_missing(self, mock_gai):
+        def side_effect(host, port):
+            if host == "chat.example":
+                return [(2, 1, 6, "", ("1.2.3.4", 993))]
+            raise socket.gaierror("NXDOMAIN")
+        mock_gai.side_effect = side_effect
+        assert metrics_mod.verify_relay_status(
+            "chat.example", "Could not find DNS resolutions"
+        ) == -1
+
+    @patch("chatmail_prober.metrics.socket.getaddrinfo")
+    def test_all_subdomains_resolve(self, mock_gai):
+        mock_gai.return_value = [(2, 1, 6, "", ("1.2.3.4", 993))]
+        assert metrics_mod.verify_relay_status(
+            "chat.example", "Could not find DNS resolutions"
+        ) == -1
+
+
+class TestIsTransientAliveError:
+    def test_timeout_is_transient(self):
+        assert metrics_mod.is_transient_alive_error("a.example", "timeout") is True
+
+    def test_unknown_is_transient(self):
+        assert metrics_mod.is_transient_alive_error("a.example", "weird error") is True
+
+    def test_connection_refused_not_transient(self):
+        assert metrics_mod.is_transient_alive_error("a.example", "connection refused") is False
+
+    def test_auth_not_transient(self):
+        assert metrics_mod.is_transient_alive_error("a.example", "AUTHENTICATIONFAILED") is False
+
+    @patch("chatmail_prober.metrics.socket.getaddrinfo")
+    def test_genuine_dns_not_transient(self, mock_gai):
+        mock_gai.side_effect = socket.gaierror("NXDOMAIN")
+        assert metrics_mod.is_transient_alive_error(
+            "dead.example", "Name or service not known"
+        ) is False
+
+    @patch("chatmail_prober.metrics.socket.getaddrinfo")
+    def test_reclassified_dns_is_transient(self, mock_gai):
+        mock_gai.return_value = [(2, 1, 6, "", ("1.2.3.4", 993))]
+        assert metrics_mod.is_transient_alive_error(
+            "alive.example", "Could not find DNS resolutions"
+        ) is True
+
+    def test_none_error_not_transient(self):
+        assert metrics_mod.is_transient_alive_error("a.example", None) is False
+
+    def test_tls_not_transient(self):
+        assert metrics_mod.is_transient_alive_error(
+            "a.example", "certificate has expired"
+        ) is False

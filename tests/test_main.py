@@ -153,6 +153,7 @@ def _fresh_metrics(monkeypatch):
         "probe_success": metrics_mod.Gauge("ps_test", "t", labels, registry=registry),
         "probe_loss_ratio": metrics_mod.Gauge("lr_test", "t", labels, registry=registry),
         "account_setup_seconds": metrics_mod.Gauge("as_test", "t", labels, registry=registry),
+        "relay_status": metrics_mod.Gauge("rs_test", "t", ["relay"], registry=registry),
     }
     for name, metric in new.items():
         monkeypatch.setattr(metrics_mod, name, metric)
@@ -277,18 +278,143 @@ class TestCheckRelaysAlive:
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _selective_probe)
         relays = ["a.example", "dead.example", "b.example"]
         args = _make_args(tmp_path, workers=3)
-        alive = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args)
 
         assert alive == ["a.example", "b.example"]
         assert "dead.example" not in alive
+        assert dead_set == {"dead.example"}
 
     def test_all_alive(self, tmp_path, monkeypatch, _fresh_metrics):
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
         relays = ["a.example", "b.example", "c.example"]
         args = _make_args(tmp_path, workers=3)
-        alive = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args)
 
         assert alive == relays
+        assert dead_set == set()
+
+    def test_retries_transient_errors(self, tmp_path, monkeypatch, _fresh_metrics):
+        """Relays with transient errors (timeout) are retried and can recover."""
+        call_count = {}
+
+        def _flaky_probe(source, dest, count=1, interval=0.1,
+                         accounts_dir="", timeout=10, relay_contexts=None):
+            n = call_count.get(source, 0) + 1
+            call_count[source] = n
+            if source == "flaky.example" and n <= 1:
+                return ProbeResult(source, dest, error="timeout")
+            return ProbeResult(source, dest, sent=1, received=1,
+                               loss=0.0, rtts_ms=[100.0])
+
+        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _flaky_probe)
+        monkeypatch.setattr("chatmail_prober.__main__.time.sleep", lambda _: None)
+        monkeypatch.setattr("chatmail_prober.__main__.is_transient_alive_error",
+                            lambda r, e: e is not None and "timeout" in e.lower())
+        relays = ["a.example", "flaky.example", "b.example"]
+        args = _make_args(tmp_path, workers=3)
+        alive, dead_set = check_relays_alive(relays, args)
+
+        assert "flaky.example" in alive
+        assert "flaky.example" not in dead_set
+        assert call_count["flaky.example"] == 2  # initial + 1 retry
+
+    def test_no_retry_for_persistent_errors(self, tmp_path, monkeypatch, _fresh_metrics):
+        """Relays with persistent errors (auth, connection refused) are not retried."""
+        call_count = {}
+
+        def _failing_probe(source, dest, count=1, interval=0.1,
+                           accounts_dir="", timeout=10, relay_contexts=None):
+            call_count[source] = call_count.get(source, 0) + 1
+            if source == "auth.example":
+                return ProbeResult(source, dest, error="AUTHENTICATIONFAILED")
+            if source == "refused.example":
+                return ProbeResult(source, dest, error="connection refused")
+            return ProbeResult(source, dest, sent=1, received=1,
+                               loss=0.0, rtts_ms=[100.0])
+
+        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _failing_probe)
+        monkeypatch.setattr("chatmail_prober.__main__.time.sleep", lambda _: None)
+        monkeypatch.setattr("chatmail_prober.__main__.is_transient_alive_error",
+                            lambda r, e: False)
+        relays = ["a.example", "auth.example", "refused.example"]
+        args = _make_args(tmp_path, workers=3)
+        alive, dead_set = check_relays_alive(relays, args)
+
+        assert "auth.example" not in alive
+        assert "refused.example" not in alive
+        assert dead_set == {"auth.example", "refused.example"}
+        assert call_count["auth.example"] == 1
+        assert call_count["refused.example"] == 1
+
+    def test_retry_gives_up_after_max_retries(self, tmp_path, monkeypatch, _fresh_metrics):
+        """Relays that keep timing out are excluded after max retries."""
+        call_count = {}
+
+        def _always_timeout(source, dest, count=1, interval=0.1,
+                            accounts_dir="", timeout=10, relay_contexts=None):
+            call_count[source] = call_count.get(source, 0) + 1
+            if source == "slow.example":
+                return ProbeResult(source, dest, error="timeout")
+            return ProbeResult(source, dest, sent=1, received=1,
+                               loss=0.0, rtts_ms=[100.0])
+
+        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _always_timeout)
+        monkeypatch.setattr("chatmail_prober.__main__.time.sleep", lambda _: None)
+        monkeypatch.setattr("chatmail_prober.__main__.is_transient_alive_error",
+                            lambda r, e: e is not None and "timeout" in e.lower())
+        relays = ["a.example", "slow.example"]
+        args = _make_args(tmp_path, workers=3)
+        alive, dead_set = check_relays_alive(relays, args)
+
+        assert "slow.example" not in alive
+        assert "slow.example" in dead_set
+        assert call_count["slow.example"] == 3  # initial + 2 retries
+
+    def test_no_retry_when_all_alive(self, tmp_path, monkeypatch, _fresh_metrics):
+        """No retry logic triggered when all relays pass first time."""
+        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
+        relays = ["a.example", "b.example"]
+        args = _make_args(tmp_path, workers=3)
+        alive, dead_set = check_relays_alive(relays, args)
+
+        assert alive == relays
+        assert dead_set == set()
+
+    def test_previously_dead_skips_retry(self, tmp_path, monkeypatch, _fresh_metrics):
+        """Relays in previously_dead are not retried even if transient."""
+        call_count = {}
+
+        def _always_timeout(source, dest, count=1, interval=0.1,
+                            accounts_dir="", timeout=10, relay_contexts=None):
+            call_count[source] = call_count.get(source, 0) + 1
+            if source == "known.dead":
+                return ProbeResult(source, dest, error="timeout")
+            return ProbeResult(source, dest, sent=1, received=1,
+                               loss=0.0, rtts_ms=[100.0])
+
+        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _always_timeout)
+        monkeypatch.setattr("chatmail_prober.__main__.time.sleep", lambda _: None)
+        monkeypatch.setattr("chatmail_prober.__main__.is_transient_alive_error",
+                            lambda r, e: e is not None and "timeout" in e.lower())
+        relays = ["a.example", "known.dead"]
+        args = _make_args(tmp_path, workers=3)
+        alive, dead_set = check_relays_alive(
+            relays, args, previously_dead={"known.dead"})
+
+        assert "known.dead" not in alive
+        assert "known.dead" in dead_set
+        assert call_count["known.dead"] == 1  # initial only, no retries
+
+    def test_previously_dead_recovery_detected(self, tmp_path, monkeypatch, _fresh_metrics):
+        """A previously-dead relay that now succeeds is included."""
+        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
+        relays = ["a.example", "recovered.example"]
+        args = _make_args(tmp_path, workers=3)
+        alive, dead_set = check_relays_alive(
+            relays, args, previously_dead={"recovered.example"})
+
+        assert "recovered.example" in alive
+        assert dead_set == set()
 
 
 class TestReadExcludeList:
