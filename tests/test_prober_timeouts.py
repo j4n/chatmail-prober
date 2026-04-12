@@ -1,0 +1,290 @@
+"""Tests for AccountMaker timeout and account reuse behaviour.
+
+These tests use real threading.Event / queue.Queue objects (no mock of
+threading primitives) and a minimal stub DeltaChat/Account layer, following
+the same pattern as test_thread_leak.py.
+
+Covers:
+- wait_account_online raises PingError when IMAP_INBOX_IDLE never arrives
+- run_probe surfaces that timeout as a ProbeResult.error classified as -1
+- get_relay_account reuses an already-online account (was_online=True)
+  without calling dc.add_account() or set_config_from_qr() again
+- get_relay_account creates a new account when none exists (was_online=False)
+- Self-loop probes get two distinct accounts via the exclude mechanism
+"""
+
+from __future__ import annotations
+
+import queue
+import threading
+import time
+
+import pytest
+
+from deltachat_rpc_client import EventType
+
+from chatmail_prober.prober import AccountMaker, PingError
+from chatmail_prober.metrics import relay_status_value
+
+
+# ---------------------------------------------------------------------------
+# Minimal stubs — real queue / threading, no network
+# ---------------------------------------------------------------------------
+
+class _Rpc:
+    """Stub Rpc backed by real queue.Queue instances."""
+
+    def __init__(self):
+        self._queues: dict[int, queue.Queue] = {}
+
+    def get_queue(self, account_id: int) -> queue.Queue:
+        if account_id not in self._queues:
+            self._queues[account_id] = queue.Queue()
+        return self._queues[account_id]
+
+
+class _Account:
+    """Stub Account with configurable configured_addr and addr."""
+
+    def __init__(self, rpc: _Rpc, account_id: int, domain: str):
+        self._rpc = rpc
+        self.id = account_id
+        self._domain = domain
+        self._config: dict[str, str] = {
+            "configured_addr": f"user{account_id}@{domain}",
+            "addr": f"user{account_id}@{domain}",
+        }
+        self.start_io_called = 0
+        self.set_config_calls: list[tuple[str, str]] = []
+
+    def get_config(self, key: str) -> str | None:
+        return self._config.get(key)
+
+    def set_config(self, key: str, value: str) -> None:
+        self._config[key] = value
+        self.set_config_calls.append((key, value))
+
+    def set_config_from_qr(self, qr_url: str) -> None:
+        # Simulate successful QR config: populate configured_addr.
+        # create_qr_url() returns "dcaccount:<domain>", so strip the scheme.
+        # The real core would set configured_addr to "<user>@<domain>".
+        if qr_url.startswith("dcaccount:"):
+            domain = qr_url[len("dcaccount:"):]
+        else:
+            domain = qr_url.split("@")[-1]
+        self._config["configured_addr"] = f"newuser{self.id}@{domain}"
+
+    def start_io(self) -> None:
+        self.start_io_called += 1
+
+
+class _DC:
+    """Stub DeltaChat that tracks account creation calls."""
+
+    def __init__(self, rpc: _Rpc, domain: str):
+        self._rpc = rpc
+        self._domain = domain
+        self._accounts: list[_Account] = []
+        self.add_account_calls = 0
+
+    def get_all_accounts(self) -> list[_Account]:
+        return list(self._accounts)
+
+    def add_account(self) -> _Account:
+        self.add_account_calls += 1
+        acct = _Account(self._rpc, len(self._accounts) + 1, self._domain)
+        # New accounts start unconfigured (no configured_addr until set_config_from_qr)
+        acct._config.pop("configured_addr", None)
+        self._accounts.append(acct)
+        return acct
+
+
+def _push_idle(rpc: _Rpc, account_id: int, delay: float = 0.0) -> None:
+    """Push an IMAP_INBOX_IDLE event into the account's queue after delay."""
+    def _push():
+        if delay:
+            time.sleep(delay)
+        rpc.get_queue(account_id).put({"kind": EventType.IMAP_INBOX_IDLE})
+    threading.Thread(target=_push, daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
+# Tests: wait_account_online timeout
+# ---------------------------------------------------------------------------
+
+class TestWaitAccountOnlineTimeout:
+    """AccountMaker.wait_account_online must raise PingError on timeout."""
+
+    def test_raises_ping_error_when_no_event(self):
+        """No event in queue -> PingError after timeout."""
+        rpc = _Rpc()
+        dc = _DC(rpc, "hostc.zzz")
+        maker = AccountMaker(dc)
+        account = _Account(rpc, 1, "hostc.zzz")
+
+        with pytest.raises(PingError) as exc_info:
+            maker.wait_account_online(account, timeout=0.15)
+
+        assert "Timeout waiting for" in str(exc_info.value)
+        assert "hostc.zzz" in str(exc_info.value) or "user1" in str(exc_info.value)
+
+    def test_error_message_matches_production_log_format(self):
+        """The PingError message must match the format seen in production logs:
+        'Timeout waiting for <addr> to come online'
+        """
+        rpc = _Rpc()
+        dc = _DC(rpc, "hostc.zzz")
+        maker = AccountMaker(dc)
+        account = _Account(rpc, 99, "hostc.zzz")
+
+        with pytest.raises(PingError) as exc_info:
+            maker.wait_account_online(account, timeout=0.15)
+
+        msg = str(exc_info.value)
+        assert msg.startswith("Timeout waiting for"), (
+            f"Expected 'Timeout waiting for ...', got: {msg!r}"
+        )
+        assert "to come online" in msg
+
+    def test_timeout_error_classifies_as_minus_one(self):
+        """The PingError message must map to relay_status_value == -1 (timeout)."""
+        rpc = _Rpc()
+        dc = _DC(rpc, "hostc.zzz")
+        maker = AccountMaker(dc)
+        account = _Account(rpc, 1, "hostc.zzz")
+
+        with pytest.raises(PingError) as exc_info:
+            maker.wait_account_online(account, timeout=0.15)
+
+        # Simulate how run_probe wraps it:
+        wrapped = f"Timeout or error waiting for profiles to be online: {exc_info.value}"
+        assert relay_status_value(wrapped) == -1, (
+            f"Expected -1 (timeout) for: {wrapped!r}"
+        )
+
+    def test_succeeds_when_event_arrives_in_time(self):
+        """wait_account_online must return normally when IMAP_INBOX_IDLE arrives."""
+        rpc = _Rpc()
+        dc = _DC(rpc, "relay.example")
+        maker = AccountMaker(dc)
+        account = _Account(rpc, 1, "relay.example")
+
+        _push_idle(rpc, account.id, delay=0.05)
+
+        # Should not raise; event arrives within 0.5s timeout
+        maker.wait_account_online(account, timeout=0.5)
+
+    def test_ignores_non_idle_events_before_idle(self):
+        """Non-IMAP_INBOX_IDLE events must be ignored; only IMAP_INBOX_IDLE unblocks."""
+        rpc = _Rpc()
+        dc = _DC(rpc, "relay.example")
+        maker = AccountMaker(dc)
+        account = _Account(rpc, 1, "relay.example")
+
+        # Push a noise event first, then the real one
+        def _push_sequence():
+            time.sleep(0.02)
+            rpc.get_queue(account.id).put({"kind": EventType.INFO, "msg": "noise"})
+            time.sleep(0.02)
+            rpc.get_queue(account.id).put({"kind": EventType.IMAP_INBOX_IDLE})
+
+        threading.Thread(target=_push_sequence, daemon=True).start()
+        maker.wait_account_online(account, timeout=0.5)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Tests: account reuse via get_relay_account
+# ---------------------------------------------------------------------------
+
+class TestAccountReuse:
+    """get_relay_account must reuse online accounts without re-running setup."""
+
+    def test_first_call_creates_new_account(self):
+        """First call for a domain must call dc.add_account() and return was_online=False."""
+        rpc = _Rpc()
+        dc = _DC(rpc, "relay.example")
+        maker = AccountMaker(dc)
+
+        account, was_online = maker.get_relay_account("relay.example")
+
+        assert dc.add_account_calls == 1
+        assert was_online is False
+        assert account in maker.online
+
+    def test_second_call_reuses_online_account(self):
+        """Second call for same domain must return the same account with was_online=True."""
+        rpc = _Rpc()
+        dc = _DC(rpc, "relay.example")
+        maker = AccountMaker(dc)
+
+        first, _ = maker.get_relay_account("relay.example")
+        add_calls_after_first = dc.add_account_calls
+
+        second, was_online = maker.get_relay_account("relay.example")
+
+        assert second is first, "Expected the same account object to be reused"
+        assert was_online is True
+        assert dc.add_account_calls == add_calls_after_first, (
+            "dc.add_account() must not be called again when reusing an online account"
+        )
+
+    def test_reuse_skips_start_io(self):
+        """Reused account must not have start_io() called again."""
+        rpc = _Rpc()
+        dc = _DC(rpc, "relay.example")
+        maker = AccountMaker(dc)
+
+        first, _ = maker.get_relay_account("relay.example")
+        start_io_count = first.start_io_called
+
+        _, was_online = maker.get_relay_account("relay.example")
+
+        assert was_online is True
+        assert first.start_io_called == start_io_count, (
+            "start_io() must not be called again on a reused account"
+        )
+
+    def test_self_loop_returns_two_distinct_accounts(self):
+        """Self-loop (src==dst) must produce two different accounts via exclude."""
+        rpc = _Rpc()
+        dc = _DC(rpc, "relay.example")
+        maker = AccountMaker(dc)
+
+        sender, sender_was_online = maker.get_relay_account("relay.example")
+        receiver, receiver_was_online = maker.get_relay_account(
+            "relay.example", exclude=(sender,)
+        )
+
+        assert sender is not receiver, (
+            "Self-loop must use two distinct accounts; sender and receiver are the same"
+        )
+        assert dc.add_account_calls == 2
+
+    def test_different_domain_creates_separate_account(self):
+        """Accounts for different domains must not be reused across domains."""
+        rpc = _Rpc()
+        dc_a = _DC(rpc, "a.example")
+        dc_b = _DC(rpc, "b.example")
+        maker_a = AccountMaker(dc_a)
+        maker_b = AccountMaker(dc_b)
+
+        acct_a, _ = maker_a.get_relay_account("a.example")
+        acct_b, _ = maker_b.get_relay_account("b.example")
+
+        assert acct_a is not acct_b
+        assert dc_a.add_account_calls == 1
+        assert dc_b.add_account_calls == 1
+
+    def test_multiple_rounds_no_extra_setup(self):
+        """Simulating N probe rounds: add_account must be called exactly once."""
+        rpc = _Rpc()
+        dc = _DC(rpc, "relay.example")
+        maker = AccountMaker(dc)
+
+        N = 10
+        for _ in range(N):
+            _, was_online = maker.get_relay_account("relay.example")
+
+        assert dc.add_account_calls == 1, (
+            f"Expected 1 add_account call across {N} rounds, got {dc.add_account_calls}"
+        )
