@@ -58,7 +58,7 @@ class TestJsonRenderer:
         captured = capsys.readouterr()
         lines = [l for l in captured.err.splitlines() if l.strip()]
         parsed = json.loads(lines[-1])
-        assert parsed["level"] in ("warning", "WARNING")
+        assert parsed["level"] == "warn"
 
     def test_json_output_contains_timestamp(self, capsys):
         log = structlog.get_logger("test.ts")
