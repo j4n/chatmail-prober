@@ -5,6 +5,7 @@ with deltachat-rpc-client.  No group mode, no CLI output, no verbose
 gating -- just structured logging.
 """
 
+import contextlib
 import ipaddress
 import logging
 import os
@@ -457,10 +458,8 @@ class RelayPool:
         """Close and reopen a single relay's context (e.g. after RPC crash)."""
         old = self._contexts.pop(relay, None)
         if old is not None:
-            try:
+            with contextlib.suppress(Exception):
                 old.close()
-            except Exception:
-                pass
         ctx = RelayContext(relay, self._cache_dir / relay)
         ctx.open()
         self._contexts[relay] = ctx
