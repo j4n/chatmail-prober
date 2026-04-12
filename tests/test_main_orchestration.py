@@ -86,9 +86,10 @@ class TestAliveCheckMetrics:
 
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _probe)
         args = _make_args(tmp_path, workers=2)
-        alive = check_relays_alive(["host.abc", "host.good"], args)
+        alive, dead_set = check_relays_alive(["host.abc", "host.good"], args)
 
         assert "host.abc" not in alive
+        assert "host.abc" in dead_set
         assert "host.good" in alive
         assert metrics_mod.relay_status.labels(relay="host.abc")._value.get() == -6.0
 
@@ -107,7 +108,7 @@ class TestAliveCheckMetrics:
 
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _probe)
         args = _make_args(tmp_path, workers=2)
-        alive = check_relays_alive(["hostb.xyz", "host.good"], args)
+        alive, dead_set = check_relays_alive(["hostb.xyz", "host.good"], args)
 
         assert "hostb.xyz" not in alive
         assert metrics_mod.relay_status.labels(relay="hostb.xyz")._value.get() == -3.0
@@ -127,7 +128,7 @@ class TestAliveCheckMetrics:
 
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _probe)
         args = _make_args(tmp_path, workers=2)
-        alive = check_relays_alive(["hostd.xyz", "host.good"], args)
+        alive, dead_set = check_relays_alive(["hostd.xyz", "host.good"], args)
 
         assert "hostd.xyz" not in alive
         assert metrics_mod.relay_status.labels(relay="hostd.xyz")._value.get() == -1.0
@@ -136,9 +137,10 @@ class TestAliveCheckMetrics:
         monkeypatch.setattr("chatmail_prober.__main__.run_probe",
                             lambda *a, **kw: _ok(a[0], a[1]))
         args = _make_args(tmp_path, workers=1)
-        alive = check_relays_alive(["host.good"], args)
+        alive, dead_set = check_relays_alive(["host.good"], args)
 
         assert alive == ["host.good"]
+        assert dead_set == set()
         assert metrics_mod.relay_status.labels(relay="host.good")._value.get() == 1.0
 
 
