@@ -43,7 +43,7 @@ class PingError(Exception):
     """Raised when a probe encounters a non-recoverable error."""
 
 
-def _is_fatal_error(msg):
+def _is_fatal_error(msg: str) -> bool:
     """Check if an RPC ERROR event message indicates a non-recoverable failure.
 
     These errors will not resolve by waiting longer (DNS missing, port
@@ -68,7 +68,7 @@ def _is_fatal_error(msg):
     return False
 
 
-def is_ip_address(host):
+def is_ip_address(host: str) -> bool:
     """Check if the given host is an IP address."""
     try:
         ipaddress.ip_address(host)
@@ -77,7 +77,7 @@ def is_ip_address(host):
         return False
 
 
-def generate_credentials():
+def generate_credentials() -> tuple[str, str]:
     """Generate random username and password for IP-based login.
 
     Returns:
@@ -89,7 +89,7 @@ def generate_credentials():
     return username, password
 
 
-def create_qr_url(domain_or_ip):
+def create_qr_url(domain_or_ip: str) -> str:
     """Create either a dcaccount or dclogin URL based on input type."""
     if is_ip_address(domain_or_ip):
         username, password = generate_credentials()
