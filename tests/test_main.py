@@ -191,7 +191,7 @@ class TestRunRound:
         args = _make_args(tmp_path, workers=2)
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
         try:
-            run_round(relays, args, executors, _make_worker_pools(args.workers))
+            run_round(relays, args, executors, _make_worker_pools(args.workers), shutdown_event=threading.Event())
         finally:
             for ex in executors:
                 ex.shutdown(wait=False)
@@ -223,7 +223,7 @@ class TestRunRound:
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
         try:
             run_round(relays, args, executors, _make_worker_pools(args.workers),
-                      shutdown_event)
+                      shutdown_event=shutdown_event)
         finally:
             for ex in executors:
                 ex.shutdown(wait=False)
@@ -253,7 +253,7 @@ class TestRunRound:
         args = _make_args(tmp_path, workers=2)
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
         try:
-            run_round(relays, args, executors, _make_worker_pools(args.workers))
+            run_round(relays, args, executors, _make_worker_pools(args.workers), shutdown_event=threading.Event())
         finally:
             for ex in executors:
                 ex.shutdown(wait=False)
@@ -451,7 +451,7 @@ class TestRunRoundExclude:
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
         exclude = {("a.example", "b.example")}
         try:
-            run_round(relays, args, executors, _make_worker_pools(args.workers),
+            run_round(relays, args, executors, _make_worker_pools(args.workers), shutdown_event=threading.Event(),
                       exclude=exclude)
         finally:
             for ex in executors:

@@ -54,9 +54,11 @@ class TestRoundCompleteLog:
         args.timeout = 30
         args.cache_dir = str(tmp_path)
 
+        import threading
         try:
             run_round(["relay.a", "relay.b"], args,
-                      executors=[executor], worker_pools=[pool])
+                      executors=[executor], worker_pools=[pool],
+                      shutdown_event=threading.Event())
         finally:
             executor.shutdown(wait=True)
 
@@ -106,31 +108,55 @@ class TestAliveCheckStartLog:
 
 
 class TestSetupProfileLog:
-    """prober.py: setup_sender_profile log must carry host and addr fields."""
+    """prober.py: DEAD warning must carry host as a structured field.
+
+    This test verifies that when check_relays_alive marks a relay as DEAD,
+    the warning log record carries a 'relay' field (bound via contextvars)
+    rather than embedding the hostname inside the event string.
+    """
 
     def setup_method(self):
         configure_logging(tty=False, level=logging.DEBUG)
 
-    def test_setup_profile_log_has_host_and_addr(self, capsys, monkeypatch):
-        """AccountMaker.setup_sender_profile must log host= and addr= as fields."""
-        import asyncio
-        from chatmail_prober.prober import AccountMaker
-        from deltachat_rpc_client import JsonRpcError
+    def test_dead_relay_warning_carries_relay_field(self, tmp_path, monkeypatch, capsys):
+        """DEAD warning for a relay must carry relay= as a structured JSON field."""
+        from chatmail_prober.__main__ import check_relays_alive
+        from chatmail_prober.prober import ProbeResult
 
-        mock_rpc = MagicMock()
-        mock_rpc.add_account = MagicMock(return_value=MagicMock())
+        monkeypatch.setattr(
+            "chatmail_prober.__main__.run_probe",
+            lambda s, d, *a, **kw: ProbeResult(s, d, error="IMAP failed to connect"),
+        )
+        monkeypatch.setattr("chatmail_prober.__main__.clear_stale_relay_labels", lambda r: None)
+        monkeypatch.setattr(
+            "chatmail_prober.__main__.relay_status",
+            MagicMock(**{"labels.return_value": MagicMock()}),
+        )
+        monkeypatch.setattr("chatmail_prober.__main__.verify_relay_status", lambda r, e: -6)
+        # Skip the 5-second retry sleep so the test completes instantly
+        monkeypatch.setattr("chatmail_prober.__main__.time.sleep", lambda _: None)
 
-        async def _fail(*a, **kw):
-            raise JsonRpcError({"code": -1, "message": "IMAP failed to connect"})
+        args = MagicMock()
+        args.workers = 1
+        args.count = 1
+        args.ping_interval = 0.0
+        args.timeout = 30
+        args.cache_dir = str(tmp_path)
 
-        maker = AccountMaker.__new__(AccountMaker)
-        maker.rpc = mock_rpc
-        maker.online = {}
-        maker.host = "test.relay"
-        maker._cache_dir = "/tmp/test"
+        check_relays_alive(["broken.relay"], args)
 
-        # Verify the log emitted on setup failure carries host and addr as fields
         logs = _json_logs(capsys)
-        # This test will be green once prober.py log calls are converted
-        # For now just confirm the module imports cleanly
-        assert True
+        # The first failure emits event='relay_dead'; retries emit 'relay_retry_dead'
+        dead_warnings = [
+            l for l in logs
+            if l.get("level") == "warn"
+            and l.get("event") in ("relay_dead", "relay_retry_dead")
+        ]
+        assert dead_warnings, (
+            f"expected relay_dead warning, got events: {[l.get('event') for l in logs]}"
+        )
+        for rec in dead_warnings:
+            assert "relay" in rec, (
+                f"relay_dead warning must carry relay= field, got: {rec}"
+            )
+            assert rec["relay"] == "broken.relay"

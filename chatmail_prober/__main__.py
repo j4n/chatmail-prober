@@ -32,7 +32,7 @@ from .metrics import (
     relay_status, relay_status_value,
     round_duration_seconds, update_metrics, verify_relay_status,
 )
-from .output import start_exporter_server, write_textfile
+from .output import print_metrics, start_exporter_server, write_textfile
 from .prober import ProbeResult, RelayPool, run_probe
 
 log = get_logger(__name__)
@@ -221,6 +221,12 @@ def parse_args(argv=None):
         "--reset",
         action="store_true",
         help="remove all account directories to force fresh account creation",
+    )
+    parser.add_argument(
+        "--print-metrics",
+        action="store_true",
+        default=False,
+        help="print Prometheus metrics to stdout after each probe round (useful with --once for debugging)",
     )
     return parser.parse_args(argv)
 
@@ -437,7 +443,7 @@ def check_relays_alive(relays, args, previously_dead=None):
     return alive, dead_set
 
 
-def run_round(relays, args, executors, worker_pools, shutdown_event=None,
+def run_round(relays, args, executors, worker_pools, shutdown_event,
               textfile=None, exclude=None):
     """Run one complete probe round across all relay pairs.
 
@@ -742,6 +748,8 @@ def main(argv=None):
                 write_textfile(args.textfile)
 
             if args.once or stop_after_round.is_set():
+                if args.print_metrics:
+                    print_metrics()
                 break
 
             remaining = max(0, args.interval - elapsed)
