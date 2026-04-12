@@ -41,7 +41,6 @@ log = logging.getLogger(__name__)
 
 class PingError(Exception):
     """Raised when a probe encounters a non-recoverable error."""
-    pass
 
 
 def _is_fatal_error(msg):
