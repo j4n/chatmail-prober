@@ -126,23 +126,24 @@ class RelayContext:
         """Start the RPC server and initialize DeltaChat + AccountMaker."""
         if self.accounts_dir.exists() and not self.accounts_dir.joinpath("accounts.toml").exists():
             shutil.rmtree(self.accounts_dir)
-        self.rpc = Rpc(accounts_dir=self.accounts_dir)
-        self.rpc.__enter__()
+        rpc = Rpc(accounts_dir=self.accounts_dir)
+        rpc.__enter__()  # Rpc has no public open(); __enter__ is the intended API
+        self.rpc = rpc
         self.dc = DeltaChat(self.rpc)
         self.maker = AccountMaker(self.dc)
         return self
 
     def close(self):
         """Shut down the RPC server."""
-        if self.rpc is not None:
+        rpc = self.rpc
+        if rpc is not None:
+            self.rpc = None
+            self.dc = None
+            self.maker = None
             try:
-                self.rpc.__exit__(None, None, None)
+                rpc.__exit__(None, None, None)
             except Exception as e:
                 log.warning("cleanup failed for %s: %s", self.relay, e)
-            finally:
-                self.rpc = None
-                self.dc = None
-                self.maker = None
 
     def __enter__(self):
         return self.open()
