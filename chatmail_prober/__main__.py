@@ -498,7 +498,7 @@ def run_round(relays, args, executors, worker_pools, shutdown_event=None,
             # Reopen contexts for relays involved in RPC-level failures
             # so subsequent probes can recover.
             _rpc_keywords = ("BrokenPipe", "ConnectionReset",
-                             "EOFError", "dead", "process",
+                             "EOFError", "process",
                              "rpc server closed", "rpc process")
             if any(kw.lower() in result.error.lower() for kw in _rpc_keywords):
                 pool = worker_pools[worker_id]
