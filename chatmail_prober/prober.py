@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 import urllib.parse
+from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -299,43 +300,51 @@ class Pinger:
         finally:
             self._stop_event.set()
 
-    def receive(self):
+    def receive(self) -> Generator[tuple[int, float], None, None]:
         """Receive ping messages from the single receiver.
 
         Yields:
             tuple: (seq, ms_duration) for each received message
+
+        The generator sets _stop_event on early exit so that send_pings
+        terminates promptly even when the caller breaks out of the loop.
         """
         num_pending = self.count
-        received_seqs = set()
+        received_seqs: set[int] = set()
 
         # Poll receiver's event queue directly -- no thread pool needed
         # for a single receiver.
         account_queue = self.receiver._rpc.get_queue(self.receiver.id)
-        while num_pending > 0:
-            if self.deadline is None and self._stop_event.is_set():
-                self.deadline = time.time() + 60.0
-            if self.deadline is not None and time.time() >= self.deadline:
-                break
-            try:
-                item = account_queue.get(timeout=1.0)
-                event = AttrDict(item)
-            except queue.Empty:
-                continue
+        try:
+            while num_pending > 0:
+                if self.deadline is None and self._stop_event.is_set():
+                    self.deadline = time.time() + 60.0
+                if self.deadline is not None and time.time() >= self.deadline:
+                    break
+                try:
+                    item = account_queue.get(timeout=1.0)
+                    event = AttrDict(item)
+                except queue.Empty:
+                    continue
 
-            if event.kind == EventType.INCOMING_MSG:
-                msg = self.receiver.get_message_by_id(event.msg_id)
-                text = msg.get_snapshot().text
-                parts = text.strip().split()
-                if len(parts) == 3 and parts[0] == self.tx:
-                    seq = int(parts[2])
-                    if seq not in received_seqs:
-                        ms_duration = (time.time() - float(parts[1])) * 1000
-                        self.received += 1
-                        num_pending -= 1
-                        received_seqs.add(seq)
-                        yield seq, ms_duration
-            elif event.kind == EventType.ERROR:
-                log.warning("ERROR during receive: %s", event.msg)
+                if event.kind == EventType.INCOMING_MSG:
+                    msg = self.receiver.get_message_by_id(event.msg_id)
+                    text = msg.get_snapshot().text
+                    parts = text.strip().split()
+                    if len(parts) == 3 and parts[0] == self.tx:
+                        seq = int(parts[2])
+                        if seq not in received_seqs:
+                            ms_duration = (time.time() - float(parts[1])) * 1000
+                            self.received += 1
+                            num_pending -= 1
+                            received_seqs.add(seq)
+                            yield seq, ms_duration
+                elif event.kind == EventType.ERROR:
+                    log.warning("ERROR during receive: %s", event.msg)
+        finally:
+            # Signal the sender to stop even if the caller breaks early,
+            # preventing send_pings from blocking indefinitely on sleep.
+            self._stop_event.set()
 
 
 # ---------------------------------------------------------------------------
