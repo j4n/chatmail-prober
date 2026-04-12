@@ -1,8 +1,14 @@
 """Prometheus metric definitions and update logic."""
 
+from __future__ import annotations
+
 import logging
 import socket
 import statistics
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .prober import ProbeResult
 
 from prometheus_client import (
     CollectorRegistry, Counter, Gauge, REGISTRY,
@@ -104,7 +110,7 @@ relay_status = Gauge(
 )
 
 
-def clear_stale_labels(active_relays):
+def clear_stale_labels(active_relays: list[str]) -> None:
     """Remove label sets for relays no longer in the active set.
 
     Prevents label cardinality from growing unbounded when relays are
@@ -126,7 +132,7 @@ def clear_stale_labels(active_relays):
                 metric.remove(*label_values)
 
 
-def relay_status_value(error_str):
+def relay_status_value(error_str: str | None) -> int:
     """Map alive-check error string to cmping_relay_status integer.
 
     Return values:
@@ -159,7 +165,7 @@ def relay_status_value(error_str):
     return 0
 
 
-def verify_relay_status(relay, error_str):
+def verify_relay_status(relay: str | None, error_str: str | None) -> int:
     """Get relay status value with DNS cross-check.
 
     Wraps relay_status_value() and corrects false DNS errors from the
@@ -203,7 +209,7 @@ def verify_relay_status(relay, error_str):
     return -1
 
 
-def is_transient_alive_error(relay, error_str):
+def is_transient_alive_error(relay: str | None, error_str: str | None) -> bool:
     """Check if an alive-check error is transient and worth retrying.
 
     Returns True for errors that might resolve on retry (timeouts,
@@ -215,7 +221,7 @@ def is_transient_alive_error(relay, error_str):
     return status in (-1, 0)
 
 
-def classify_alive_check_error(error_str):
+def classify_alive_check_error(error_str: str | None) -> str:
     """Deprecated: use relay_status_value() instead. Map error to string reason.
 
     Kept for backwards compatibility with dashboard metric queries that expect string reasons.
@@ -228,7 +234,7 @@ def classify_alive_check_error(error_str):
     return mapping.get(value, "unknown")
 
 
-def clear_stale_relay_labels(configured_relays):
+def clear_stale_relay_labels(configured_relays: list[str]) -> None:
     """Remove relay_status label sets for relays no longer in the configured list."""
     active = set(configured_relays)
     for (relay,) in list(relay_status._metrics.keys()):
@@ -236,7 +242,7 @@ def clear_stale_relay_labels(configured_relays):
             relay_status.remove(relay)
 
 
-def update_metrics(result):
+def update_metrics(result: ProbeResult) -> None:
     """Update Prometheus metrics from a ProbeResult."""
     probe_type = "self" if result.source == result.destination else "cross"
     labels = dict(source=result.source, destination=result.destination,
