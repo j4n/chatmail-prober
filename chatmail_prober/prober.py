@@ -5,6 +5,8 @@ with deltachat-rpc-client.  No group mode, no CLI output, no verbose
 gating -- just structured logging.
 """
 
+from __future__ import annotations
+
 import contextlib
 import ipaddress
 import logging
@@ -116,14 +118,14 @@ class RelayContext:
     manually via open()/close() for long-lived relay pools.
     """
 
-    def __init__(self, relay, accounts_dir):
+    def __init__(self, relay: str, accounts_dir: str | Path) -> None:
         self.relay = relay
         self.accounts_dir = Path(accounts_dir)
         self.rpc = None
         self.dc = None
         self.maker = None
 
-    def open(self):
+    def open(self) -> RelayContext:
         """Start the RPC server and initialize DeltaChat + AccountMaker."""
         if self.accounts_dir.exists() and not self.accounts_dir.joinpath("accounts.toml").exists():
             shutil.rmtree(self.accounts_dir)
@@ -134,7 +136,7 @@ class RelayContext:
         self.maker = AccountMaker(self.dc)
         return self
 
-    def close(self):
+    def close(self) -> None:
         """Shut down the RPC server."""
         rpc = self.rpc
         if rpc is not None:
@@ -146,10 +148,10 @@ class RelayContext:
             except Exception as e:
                 log.warning("cleanup failed for %s: %s", self.relay, e)
 
-    def __enter__(self):
+    def __enter__(self) -> RelayContext:
         return self.open()
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: object) -> bool:
         self.close()
         return False
 
@@ -157,7 +159,7 @@ class RelayContext:
 class AccountMaker:
     """Creates and manages deltachat accounts on a relay."""
 
-    def __init__(self, dc):
+    def __init__(self, dc: DeltaChat) -> None:
         self.dc = dc
         self.online = []
 
