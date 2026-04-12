@@ -117,12 +117,10 @@ def clear_stale_labels(active_relays: list[str]) -> None:
     removed from the relay list across process restarts or alive-check
     exclusions.
     """
-    import sys
-    mod = sys.modules[__name__]
     all_metrics = [
-        mod.rtt_median, mod.rtt_stddev, mod.rtt_p90, mod.rtt_p10,
-        mod.probe_success, mod.probe_loss_ratio, mod.account_setup_seconds,
-        mod.send_errors_total,
+        rtt_median, rtt_stddev, rtt_p90, rtt_p10,
+        probe_success, probe_loss_ratio, account_setup_seconds,
+        send_errors_total,
     ]
     active = set(active_relays)
     for metric in all_metrics:
