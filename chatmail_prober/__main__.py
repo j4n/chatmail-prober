@@ -57,7 +57,7 @@ class _SupprRpcClosedFilter(logging.Filter):
         return True
 
 
-def _avg_ms(rtts_ms):
+def _avg_ms(rtts_ms: list[float]) -> float:
     return sum(rtts_ms) / len(rtts_ms) if rtts_ms else 0.0
 
 
@@ -635,7 +635,7 @@ def main(argv=None):
 
     def _handle_usr1(signum, frame):
         stop_after_round.set()
-        log.warn("SIGUSR1 received -- will exit after current round completes")
+        log.warning("SIGUSR1 received -- will exit after current round completes")
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
