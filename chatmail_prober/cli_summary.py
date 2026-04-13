@@ -4,20 +4,22 @@ Renders a human-readable table to *out* (default: sys.stdout) after a
 single probe round completes.  Each probe pair occupies one row::
 
     Route                                    Sent  Recv  Loss    p50    p90    p99   mdev  Setup   Msg
-    nine.testrun.org -> nine.testrun.org        3     3   0.0%  2271   2316   2326    431   4.8s   3.2s
-    nine.testrun.org -> mailchat.pl             3     3   0.0%  2571   2614   2624    443   4.8s   3.2s
-    mailchat.pl      -> nine.testrun.org        3     3   0.0%  2860   3486   3627    785   4.8s   3.2s
-    mailchat.pl      -> mailchat.pl             3     3   0.0%  2719   3356   3499    826   4.8s   3.2s
+    nine.testrun.org -> nine.testrun.org        3     3   0.0%  2271ms  2316ms  2326ms  431ms  4850.00ms  3240.00ms
+    nine.testrun.org -> mailchat.pl             3     3   0.0%  2571ms  2614ms  2624ms  443ms  4850.00ms  3240.00ms
 
-    Failures (0)
+If any relays failed the alive-check, a second table lists them::
 
-    Alive: 2  Dead: 0  Probes: 4/4 ok  Elapsed: 9.5s
+    Dead relays (1)
+    Host              Error    Message
+    owo.void.my       auth     AUTHENTICATIONFAILED: login failed
+
+    Alive: 1/2  Probes: 1/1 ok  Elapsed: 9.5s
 """
 from __future__ import annotations
 
 import sys
 from collections import defaultdict
-from typing import IO, Sequence
+from typing import IO, Mapping, Sequence
 
 from chatmail_prober.prober import ProbeResult
 
@@ -27,6 +29,9 @@ _W_RECV  = 5
 _W_LOSS  = 6
 _W_RTT   = 8   # p50 / p90 / p99 / mdev (e.g. "12345ms")
 _W_TIME  = 10  # Setup / Msg (e.g. "12345.67ms")
+
+# Dead-relay table column widths (computed dynamically for Host; fixed for others)
+_W_ERR_CAT = 12   # Error category (e.g. "auth", "timeout")
 
 
 def _rtt(value: float | None) -> str:
@@ -44,10 +49,35 @@ def _loss(value: float) -> str:
     return f"{value:.1f}%"
 
 
+def _error_category(error: str | None) -> str:
+    """Extract a short category label from a raw error string."""
+    if error is None:
+        return "unknown"
+    e = error.lower()
+    if "authenticationfailed" in e or "auth" in e:
+        return "auth"
+    if "timeout" in e or "deadline" in e or "timed out" in e:
+        return "timeout"
+    if "name or service not known" in e or "dns" in e or "getaddrinfo" in e:
+        return "dns"
+    if "certificate" in e or "tls" in e or "ssl" in e:
+        return "tls"
+    if "connection refused" in e:
+        return "refused"
+    return "unknown"
+
+
+def _truncate(s: str, width: int) -> str:
+    """Truncate *s* to *width* characters, appending '…' if truncated."""
+    if len(s) <= width:
+        return s
+    return s[: width - 1] + "…"
+
+
 def render(
     results: Sequence[ProbeResult],
     alive_relays: Sequence[str],
-    dead_relays: Sequence[str],
+    dead_relays: Mapping[str, str | None],
     elapsed_s: float,
     out: IO[str] | None = None,
 ) -> None:
@@ -60,7 +90,8 @@ def render(
     alive_relays:
         Relay hostnames confirmed reachable during the alive check.
     dead_relays:
-        Relay hostnames that failed the alive check.
+        Mapping of relay hostname → raw error string (or ``None``) for
+        every relay that failed the alive check.
     elapsed_s:
         Total wall-clock time for the round in seconds.
     out:
@@ -133,28 +164,47 @@ def render(
         out.write(f"{row}\n")
 
     # ------------------------------------------------------------------
-    # Failures block (grouped by category, below the table)
+    # Probe-level failure block (grouped by category, below the table)
     # ------------------------------------------------------------------
     out.write("\n")
     if failed_results:
         by_category: dict[str, list[ProbeResult]] = defaultdict(list)
         for r in failed_results:
             by_category[r.failure_category or "unknown"].append(r)
-        out.write(f"Failures ({len(failed_results)})\n")
+        out.write(f"Probe failures ({len(failed_results)})\n")
         for category, items in sorted(by_category.items()):
             pairs = ", ".join(f"{r.source} -> {r.destination}" for r in items)
             out.write(f"  {category}: {pairs}\n")
         out.write("\n")
 
     # ------------------------------------------------------------------
+    # Dead-relay table (alive-check failures)
+    # ------------------------------------------------------------------
+    if dead_relays:
+        # Compute column widths dynamically.
+        host_w = max(len(h) for h in dead_relays)
+        host_w = max(host_w, len("Host"))
+        msg_w  = 60  # truncate long error messages
+
+        dh = f"{'Host':<{host_w}}  {'Error':<{_W_ERR_CAT}}  {'Message'}"
+        out.write(f"Dead relays ({len(dead_relays)})\n")
+        out.write(f"{dh}\n")
+        out.write(f"{'-' * len(dh)}\n")
+        for host, error in dead_relays.items():
+            category = _error_category(error)
+            message  = _truncate(error or "(no message)", msg_w)
+            out.write(f"{host:<{host_w}}  {category:<{_W_ERR_CAT}}  {message}\n")
+        out.write("\n")
+
+    # ------------------------------------------------------------------
     # Summary footer
     # ------------------------------------------------------------------
-    total   = len(results)
-    ok_cnt  = len(ok_results)
-    alive_n = len(alive_relays)
-    dead_n  = len(dead_relays)
+    total_relays = len(alive_relays) + len(dead_relays)
+    alive_n      = len(alive_relays)
+    total_probes = len(results)
+    ok_cnt       = len(ok_results)
     out.write(
-        f"Alive: {alive_n}  Dead: {dead_n}"
-        f"  Probes: {ok_cnt}/{total} ok"
+        f"Alive: {alive_n}/{total_relays}"
+        f"  Probes: {ok_cnt}/{total_probes} ok"
         f"  Elapsed: {elapsed_s:.1f}s\n"
     )

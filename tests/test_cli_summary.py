@@ -143,29 +143,29 @@ class TestSuccessRows:
 
 class TestFailedRows:
     def test_failed_row_shows_category(self):
-        out = _render([_fail()], [], ["a.example"], elapsed_s=5.0)
+        out = _render([_fail()], [], {"a.example": "timeout"}, elapsed_s=5.0)
         assert "timeout" in out.lower()
 
     def test_failed_row_shows_route(self):
-        out = _render([_fail("x.example", "y.example")], [], [], elapsed_s=5.0)
+        out = _render([_fail("x.example", "y.example")], [], {}, elapsed_s=5.0)
         assert "x.example" in out
         assert "y.example" in out
 
     def test_failed_row_shows_dashes_for_rtt(self):
-        out = _render([_fail()], [], [], elapsed_s=5.0)
+        out = _render([_fail()], [], {}, elapsed_s=5.0)
         assert "-" in out
 
     def test_dns_failure_category(self):
         out = _render(
             [_fail(error="Name or service not known: imap.a.example")],
-            [], ["a.example"], elapsed_s=5.0,
+            [], {"a.example": "Name or service not known"}, elapsed_s=5.0,
         )
         assert "dns" in out.lower()
 
     def test_mixed_ok_and_failed(self):
         out = _render(
             [_ok("a.example", "b.example"), _fail("b.example", "a.example")],
-            ["a.example", "b.example"], [], elapsed_s=5.0,
+            ["a.example", "b.example"], {}, elapsed_s=5.0,
         )
         assert "0.0%" in out          # ok row
         assert "timeout" in out.lower()  # failed row
@@ -177,12 +177,56 @@ class TestFailedRows:
 
 class TestFailureBlock:
     def test_failure_block_present_when_failures_exist(self):
-        out = _render([_fail()], [], ["a.example"], elapsed_s=5.0)
+        out = _render([_fail()], [], {"a.example": "timeout"}, elapsed_s=5.0)
         assert "Failure" in out or "failure" in out.lower()
 
     def test_no_failure_block_when_all_ok(self):
-        out = _render([_ok()], ["a.example", "b.example"], [], elapsed_s=5.0)
+        out = _render([_ok()], ["a.example", "b.example"], {}, elapsed_s=5.0)
         assert "Failure" not in out or "0" in out
+
+
+# ---------------------------------------------------------------------------
+# Dead-relay failures table
+# ---------------------------------------------------------------------------
+
+class TestDeadRelayTable:
+    """When dead_relays is a dict[str, str|None], a Host/Error/Message table
+    is rendered below the probe table."""
+
+    def test_dead_relay_table_header(self):
+        dead = {"owo.void.my": "AUTHENTICATIONFAILED: login failed"}
+        out = _render([_ok()], ["a.example"], dead, elapsed_s=5.0)
+        assert "Host" in out
+        assert "Error" in out
+
+    def test_dead_relay_host_shown(self):
+        dead = {"owo.void.my": "AUTHENTICATIONFAILED: login failed"}
+        out = _render([_ok()], ["a.example"], dead, elapsed_s=5.0)
+        assert "owo.void.my" in out
+
+    def test_dead_relay_error_shown(self):
+        dead = {"owo.void.my": "AUTHENTICATIONFAILED: login failed"}
+        out = _render([_ok()], ["a.example"], dead, elapsed_s=5.0)
+        assert "AUTHENTICATIONFAILED" in out
+
+    def test_no_dead_table_when_all_alive(self):
+        out = _render([_ok()], ["a.example", "b.example"], {}, elapsed_s=5.0)
+        assert "Host" not in out
+
+    def test_multiple_dead_relays_shown(self):
+        dead = {
+            "dead1.example": "timeout",
+            "dead2.example": "AUTHENTICATIONFAILED",
+        }
+        out = _render([_ok()], ["a.example"], dead, elapsed_s=5.0)
+        assert "dead1.example" in out
+        assert "dead2.example" in out
+
+    def test_dead_relay_with_none_error(self):
+        """A dead relay with no error string should render gracefully."""
+        dead = {"silent.example": None}
+        out = _render([_ok()], ["a.example"], dead, elapsed_s=5.0)
+        assert "silent.example" in out
 
 
 # ---------------------------------------------------------------------------
@@ -191,24 +235,30 @@ class TestFailureBlock:
 
 class TestSummaryFooter:
     def test_elapsed_shown(self):
-        out = _render([_ok()], ["a.example", "b.example"], [], elapsed_s=42.3)
+        out = _render([_ok()], ["a.example", "b.example"], {}, elapsed_s=42.3)
         assert "42.3s" in out
 
     def test_probes_ok_fraction(self):
         results = [_ok(), _ok("b.example", "a.example")]
-        out = _render(results, ["a.example", "b.example"], [], elapsed_s=5.0)
+        out = _render(results, ["a.example", "b.example"], {}, elapsed_s=5.0)
         assert "2/2" in out
 
-    def test_alive_dead_counts(self):
+    def test_alive_fraction_format(self):
+        """Footer shows Alive: 1/2 when one of two relays is dead."""
+        dead = {"c.example": "timeout"}
         out = _render(
             [_ok(), _fail("c.example", "c.example")],
-            ["a.example", "b.example"], ["c.example"],
+            ["a.example", "b.example"], dead,
             elapsed_s=5.0,
         )
-        assert "2" in out   # alive
-        assert "1" in out   # dead
+        # total = alive + dead = 2 + 1 = 3
+        assert "2/3" in out
+
+    def test_alive_fraction_all_alive(self):
+        out = _render([_ok()], ["a.example", "b.example"], {}, elapsed_s=5.0)
+        assert "2/2" in out
 
     def test_footer_is_last_line(self):
-        out = _render([_ok()], ["a.example", "b.example"], [], elapsed_s=5.0)
+        out = _render([_ok()], ["a.example", "b.example"], {}, elapsed_s=5.0)
         last_line = out.rstrip("\n").split("\n")[-1]
         assert "5.0s" in last_line or "Elapsed" in last_line
