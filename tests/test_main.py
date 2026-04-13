@@ -285,7 +285,7 @@ class TestCheckRelaysAlive:
 
         assert alive == ["a.example", "b.example"]
         assert "dead.example" not in alive
-        assert dead_set == {"dead.example"}
+        assert set(dead_set) == {"dead.example"}
 
     def test_all_alive(self, tmp_path, monkeypatch, _fresh_metrics):
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
@@ -294,7 +294,7 @@ class TestCheckRelaysAlive:
         alive, dead_set = check_relays_alive(relays, args)
 
         assert alive == relays
-        assert dead_set == set()
+        assert dead_set == {}
 
     def test_retries_transient_errors(self, tmp_path, monkeypatch, _fresh_metrics):
         """Relays with transient errors (timeout) are retried and can recover."""
@@ -345,7 +345,7 @@ class TestCheckRelaysAlive:
 
         assert "auth.example" not in alive
         assert "refused.example" not in alive
-        assert dead_set == {"auth.example", "refused.example"}
+        assert set(dead_set) == {"auth.example", "refused.example"}
         assert call_count["auth.example"] == 1
         assert call_count["refused.example"] == 1
 
@@ -381,7 +381,7 @@ class TestCheckRelaysAlive:
         alive, dead_set = check_relays_alive(relays, args)
 
         assert alive == relays
-        assert dead_set == set()
+        assert dead_set == {}
 
     def test_previously_dead_skips_retry(self, tmp_path, monkeypatch, _fresh_metrics):
         """Relays in previously_dead are not retried even if transient."""
@@ -402,10 +402,10 @@ class TestCheckRelaysAlive:
         relays = ["a.example", "known.dead"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(
-            relays, args, previously_dead={"known.dead"})
+            relays, args, previously_dead={"known.dead": "timeout"})
 
         assert "known.dead" not in alive
-        assert "known.dead" in dead_set
+        assert "known.dead" in dead_set  # dict membership check works on keys
         assert call_count["known.dead"] == 1  # initial only, no retries
 
     def test_previously_dead_recovery_detected(self, tmp_path, monkeypatch, _fresh_metrics):
@@ -414,10 +414,10 @@ class TestCheckRelaysAlive:
         relays = ["a.example", "recovered.example"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(
-            relays, args, previously_dead={"recovered.example"})
+            relays, args, previously_dead={"recovered.example": "timeout"})
 
         assert "recovered.example" in alive
-        assert dead_set == set()
+        assert dead_set == {}
 
 
 class TestReadExcludeList:

@@ -485,8 +485,7 @@ def check_relays_alive(relays, args, previously_dead=None):
                      if r in dead and is_transient_alive_error(r, dead[r])}
 
     alive = [r for r in relays if r not in dead]
-    dead_set = set(dead)
-    recovered = previously_dead - dead_set
+    recovered = set(previously_dead) - set(dead)
     if recovered:
         log.warning("relays_recovered", count=len(recovered), relays=list(recovered))
     if dead:
@@ -502,7 +501,7 @@ def check_relays_alive(relays, args, previously_dead=None):
                 elapsed_s=round(elapsed, 1),
                 online=len(alive), total=len(relays))
 
-    return alive, dead_set
+    return alive, dead  # dead: dict[str, str | None]  (host -> error)
 
 
 def run_round(relays, args, executors, worker_pools, shutdown_event,
@@ -767,7 +766,7 @@ def main(argv=None):
     signal.signal(signal.SIGUSR2, _handle_usr2)
 
     all_relays = relays  # preserve full list for periodic re-checks
-    previously_dead = set()
+    previously_dead: dict[str, str | None] = {}
     relays, previously_dead = check_relays_alive(all_relays, args)
     if not relays:
         raise SystemExit("No reachable relays -- aborting")
@@ -821,10 +820,8 @@ def main(argv=None):
 
             if args.once or stop_after_round.is_set():
                 if args.print_summary:
-                    alive_set = set(relays)
-                    dead_relays = [r for r in all_relays if r not in alive_set]
                     render_summary(
-                        round_results, relays, dead_relays, elapsed_s=elapsed
+                        round_results, relays, previously_dead, elapsed_s=elapsed
                     )
                 if args.print_metrics:
                     print_metrics()

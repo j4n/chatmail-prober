@@ -140,7 +140,7 @@ class TestAliveCheckMetrics:
         alive, dead_set = check_relays_alive(["host.good"], args)
 
         assert alive == ["host.good"]
-        assert dead_set == set()
+        assert dead_set == {}
         assert metrics_mod.relay_status.labels(relay="host.good")._value.get() == 1.0
 
 
