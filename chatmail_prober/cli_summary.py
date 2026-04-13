@@ -5,13 +5,13 @@ single probe round completes.  Each probe pair occupies one row::
 
     Route                                    Sent  Recv  Loss    p50    p90    p99   mdev  Setup   Msg
     nine.testrun.org -> nine.testrun.org        3     3   0.0%  2271ms  2316ms  2326ms  431ms  4850.00ms  3240.00ms
-    nine.testrun.org -> mailchat.pl             3     3   0.0%  2571ms  2614ms  2624ms  443ms  4850.00ms  3240.00ms
+    nine.testrun.org -> foobar.com              3     3   0.0%  2571ms  2614ms  2624ms  443ms  4850.00ms  3240.00ms
 
 If any relays failed the alive-check, a second table lists them::
 
     Dead relays (1)
     Host              Error    Message
-    owo.void.my       auth     AUTHENTICATIONFAILED: login failed
+    bar.foo.baz       auth     AUTHENTICATIONFAILED: login failed
 
     Alive: 1/2  Probes: 1/1 ok  Elapsed: 9.5s
 """

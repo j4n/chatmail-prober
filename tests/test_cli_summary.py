@@ -194,18 +194,18 @@ class TestDeadRelayTable:
     is rendered below the probe table."""
 
     def test_dead_relay_table_header(self):
-        dead = {"owo.void.my": "AUTHENTICATIONFAILED: login failed"}
+        dead = {"foo.bar.baz": "AUTHENTICATIONFAILED: login failed"}
         out = _render([_ok()], ["a.example"], dead, elapsed_s=5.0)
         assert "Host" in out
         assert "Error" in out
 
     def test_dead_relay_host_shown(self):
-        dead = {"owo.void.my": "AUTHENTICATIONFAILED: login failed"}
+        dead = {"foo.bar.baz": "AUTHENTICATIONFAILED: login failed"}
         out = _render([_ok()], ["a.example"], dead, elapsed_s=5.0)
-        assert "owo.void.my" in out
+        assert "foo.bar.baz" in out
 
     def test_dead_relay_error_shown(self):
-        dead = {"owo.void.my": "AUTHENTICATIONFAILED: login failed"}
+        dead = {"foo.bar.baz": "AUTHENTICATIONFAILED: login failed"}
         out = _render([_ok()], ["a.example"], dead, elapsed_s=5.0)
         assert "AUTHENTICATIONFAILED" in out
 
