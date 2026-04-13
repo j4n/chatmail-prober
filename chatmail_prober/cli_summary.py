@@ -17,6 +17,7 @@ If any relays failed the alive-check, a second table lists them::
 """
 from __future__ import annotations
 
+import shutil
 import sys
 from collections import defaultdict
 from typing import IO, Mapping, Sequence
@@ -184,7 +185,12 @@ def render(
         # Compute column widths dynamically.
         host_w = max(len(h) for h in dead_relays)
         host_w = max(host_w, len("Host"))
-        msg_w  = 60  # truncate long error messages
+
+        # Truncate the message column to fill the terminal width.
+        # Fixed columns: host_w + 2 + _W_ERR_CAT + 2 + len("Message") header.
+        term_w = shutil.get_terminal_size(fallback=(0, 0)).columns
+        fixed_w = host_w + 2 + _W_ERR_CAT + 2
+        msg_w = max(20, term_w - fixed_w) if term_w > 0 else 0  # 0 = no truncation
 
         dh = f"{'Host':<{host_w}}  {'Error':<{_W_ERR_CAT}}  {'Message'}"
         out.write(f"Dead relays ({len(dead_relays)})\n")
@@ -192,7 +198,8 @@ def render(
         out.write(f"{'-' * len(dh)}\n")
         for host, error in dead_relays.items():
             category = _error_category(error)
-            message  = _truncate(error or "(no message)", msg_w)
+            raw_msg  = error or "(no message)"
+            message  = _truncate(raw_msg, msg_w) if msg_w > 0 else raw_msg
             out.write(f"{host:<{host_w}}  {category:<{_W_ERR_CAT}}  {message}\n")
         out.write("\n")
 
