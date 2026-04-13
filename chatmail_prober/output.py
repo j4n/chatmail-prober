@@ -1,17 +1,18 @@
 """Output modes: HTTP exporter and/or textfile for node_exporter."""
 
-import logging
 import os
+import sys
 import tempfile
 
 from prometheus_client import REGISTRY, start_http_server, generate_latest
 
+from .log_config import get_logger
 from .metrics import CMPING_REGISTRY
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
-def start_exporter_server(port):
+def start_exporter_server(port: int) -> None:
     """Start the Prometheus HTTP metrics server.
 
     Registers our custom collectors into the default REGISTRY so the
@@ -26,7 +27,18 @@ def start_exporter_server(port):
     log.info("Prometheus HTTP server listening on :%d", port)
 
 
-def write_textfile(path):
+def print_metrics() -> None:
+    """Print current metrics in Prometheus text format to stdout.
+
+    Intended for interactive debugging with ``--once --print-metrics``.
+    Output goes to stdout so it can be piped or grepped independently
+    of the structured JSON log stream on stderr.
+    """
+    sys.stdout.write(generate_latest(CMPING_REGISTRY).decode("utf-8"))
+    sys.stdout.flush()
+
+
+def write_textfile(path: str) -> None:
     """Write current metrics to a .prom file atomically.
 
     Uses CMPING_REGISTRY (no process_* metrics) to avoid collisions

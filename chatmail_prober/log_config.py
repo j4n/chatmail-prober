@@ -17,12 +17,65 @@ stdlib handler that re-formats them consistently alongside structlog output.
 import logging
 import re
 import sys
+from collections.abc import Callable
+from typing import Any
 
 import structlog
+
+# ---------------------------------------------------------------------------
+# Module-level helpers — pure, stateless, independently testable
+# ---------------------------------------------------------------------------
 
 _RPC_READY_RE = re.compile(
     r"RPC server ready\.\s+Core version:\s+(?P<version>\S+)"
 )
+
+
+def _shorten_level(
+    logger: object, method: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
+    """Rename 'warning' -> 'warn' for more compact JSON/console output."""
+    if event_dict.get("level") == "warning":
+        event_dict["level"] = "warn"
+    return event_dict
+
+
+def _extract_rpc_fields(
+    logger: object, method: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
+    """Lift _rpc_version from the LogRecord into the event_dict.
+
+    Called in the foreign_pre_chain so that records rewritten by
+    _RpcReadyFilter carry a 'version' key in the final JSON output.
+    """
+    record: logging.LogRecord | None = (
+        event_dict.get("_record") or event_dict.get("record")
+    )
+    if record is not None:
+        version = getattr(record, "_rpc_version", None)
+        if version is not None:
+            event_dict["version"] = version
+    return event_dict
+
+
+class _DynamicStderrHandler(logging.StreamHandler):
+    """StreamHandler that resolves sys.stderr at emit-time, not at construction.
+
+    pytest swaps sys.stderr after handler creation; using a property here
+    ensures capsys can intercept output during tests without needing to
+    recreate the handler on every configure_logging() call.
+    """
+
+    @property
+    def stream(self) -> object:
+        return sys.stderr
+
+    @stream.setter
+    def stream(self, value: object) -> None:
+        # Intentionally ignored: we always resolve sys.stderr dynamically.
+        # StreamHandler.__init__ assigns self.stream = stream; this setter
+        # silently discards that assignment so the property always wins.
+        pass
 
 
 class _RpcReadyFilter(logging.Filter):
@@ -34,8 +87,11 @@ class _RpcReadyFilter(logging.Filter):
       - At DEBUG level it appears as event='rpc_ready' version='vX.Y.Z'.
     """
 
-    #: Set by configure_logging() so the filter knows the effective level.
-    effective_level: int = logging.INFO
+    def __init__(self, effective_level: int = logging.INFO) -> None:
+        super().__init__()
+        #: Minimum level configured by the caller; used to decide whether
+        #: to drop the downgraded DEBUG record before it reaches the handler.
+        self.effective_level = effective_level
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
         msg = record.getMessage()
@@ -53,11 +109,15 @@ class _RpcReadyFilter(logging.Filter):
         # Replace the free-text message with the structured event name.
         record.msg = "rpc_ready"
         record.args = ()
-        # Store the version on the record; a companion processor in the
+        # Store the version on the record; _extract_rpc_fields in the
         # foreign_pre_chain will lift it into the structlog event_dict.
         record._rpc_version = m.group("version")
         return True
 
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def configure_logging(
     tty: bool | None = None,
@@ -78,16 +138,7 @@ def configure_logging(
     # ------------------------------------------------------------------
     # Shared processors: run for every log record regardless of renderer
     # ------------------------------------------------------------------
-
-    def _shorten_level(
-        logger: object, method: str, event_dict: dict
-    ) -> dict:
-        """Rename 'warning' -> 'warn' for more compact JSON/console output."""
-        if event_dict.get("level") == "warning":
-            event_dict["level"] = "warn"
-        return event_dict
-
-    shared_processors: list = [
+    shared_processors: list[Callable[..., Any]] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
@@ -118,20 +169,6 @@ def configure_logging(
     # Stdlib handler: captures both structlog-routed records and records
     # from third-party libraries, formats them with the same renderer.
     # ------------------------------------------------------------------
-    def _extract_rpc_fields(
-        logger: object, method: str, event_dict: dict
-    ) -> dict:
-        """Lift _rpc_version from the LogRecord into the event_dict."""
-        record: logging.LogRecord | None = event_dict.get(
-            "_record",  # structlog 21+ key
-            event_dict.get("record"),  # fallback
-        )
-        if record is not None:
-            version = getattr(record, "_rpc_version", None)
-            if version is not None:
-                event_dict["version"] = version
-        return event_dict
-
     formatter = structlog.stdlib.ProcessorFormatter(
         # foreign_pre_chain: applied to records that did NOT come through
         # structlog (i.e. plain stdlib loggers from third-party code).
@@ -142,22 +179,9 @@ def configure_logging(
         ],
     )
 
-    # Use a StreamHandler that resolves sys.stderr at emit-time, not at
-    # construction-time.  This lets pytest's capsys fixture intercept output
-    # during tests (pytest swaps sys.stderr after handler creation).
-    class _DynamicStderrHandler(logging.StreamHandler):
-        @property
-        def stream(self):
-            return sys.stderr
-        @stream.setter
-        def stream(self, value):
-            pass  # ignore the StreamHandler.__init__ assignment
-
     handler = _DynamicStderrHandler()
     handler.setFormatter(formatter)
-    _rpc_filter = _RpcReadyFilter()
-    _rpc_filter.effective_level = level
-    handler.addFilter(_rpc_filter)
+    handler.addFilter(_RpcReadyFilter(effective_level=level))
 
     root = logging.getLogger()
     # Remove any handlers added by a previous configure_logging() call

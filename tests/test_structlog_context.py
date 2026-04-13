@@ -70,7 +70,8 @@ class TestRunRoundContextBinding:
 
         try:
             run_round(["relay.a", "relay.b"], args,
-                      executors=[executor], worker_pools=[pool])
+                      executors=[executor], worker_pools=[pool],
+                      shutdown_event=threading.Event())
         finally:
             executor.shutdown(wait=True)
 
@@ -104,7 +105,8 @@ class TestRunRoundContextBinding:
 
         try:
             run_round(["relay.a", "relay.b"], args,
-                      executors=[executor], worker_pools=[pool])
+                      executors=[executor], worker_pools=[pool],
+                      shutdown_event=threading.Event())
         finally:
             executor.shutdown(wait=True)
 
@@ -135,7 +137,8 @@ class TestRunRoundContextBinding:
 
         try:
             run_round(["relay.a", "relay.b"], args,
-                      executors=[executor], worker_pools=[pool])
+                      executors=[executor], worker_pools=[pool],
+                      shutdown_event=threading.Event())
         finally:
             executor.shutdown(wait=True)
 
