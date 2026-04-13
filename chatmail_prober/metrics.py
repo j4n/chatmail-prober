@@ -98,6 +98,12 @@ round_duration_seconds = Gauge(
     registry=CMPING_REGISTRY,
 )
 
+rounds_total = Counter(
+    "cmping_rounds_total",
+    "Total number of probe rounds completed since process start",
+    registry=CMPING_REGISTRY,
+)
+
 relay_status = Gauge(
     "cmping_relay_status",
     (

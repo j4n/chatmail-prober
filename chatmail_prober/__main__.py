@@ -29,6 +29,7 @@ from .log_config import configure_logging, get_logger
 from .metrics import (
     clear_stale_labels, clear_stale_relay_labels,
     is_transient_alive_error, last_round_timestamp,
+    rounds_total,
     relay_status, relay_status_value,
     round_duration_seconds, update_metrics, verify_relay_status,
 )
@@ -611,6 +612,7 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
     elapsed = time.time() - round_start
     last_round_timestamp.set(time.time())
     round_duration_seconds.set(elapsed)
+    rounds_total.inc()
     success_count = completed - failed
     success_rate = 100.0 * success_count / completed if completed > 0 else 0.0
     avg_ms_per_pair = int(elapsed * 1000 / completed) if completed > 0 else 0
@@ -657,6 +659,15 @@ def main(argv=None):
     except (ValueError, OSError):
         pass
 
+    cache_dir = Path(args.cache_dir).expanduser()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # --reset is a standalone operation: perform it and exit without needing relays.
+    if args.reset is not None:
+        reset_accounts(cache_dir, domains=args.reset)
+        raise SystemExit(0)
+
+    # Load relays — required for all remaining operations.
     if args.hosts is not None:
         relays = [_bracket_ipv6(h.strip()) for h in args.hosts.split(",") if h.strip()]
         if not relays:
@@ -667,19 +678,13 @@ def main(argv=None):
             fetch_relay_list(AUTO_FETCH_URL, args.auto_fetch)
             relay_files.append(args.auto_fetch)
         if not relay_files:
-            raise SystemExit("error: at least one relay list file or --auto-fetch is required")
+            raise SystemExit("error: at least one relay list file, --hosts, or --auto-fetch is required")
         relays = read_relay_list(relay_files)
     log.info("Loaded %d relays: %s", len(relays), ", ".join(relays))
 
     exclude = set()
     if args.exclude:
         exclude = read_exclude_list(args.exclude)
-
-    cache_dir = Path(args.cache_dir).expanduser()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    if args.reset is not None:
-        reset_accounts(cache_dir, domains=args.reset)
 
     if args.scan:
         scan_relays(relays, args)
