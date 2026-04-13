@@ -47,24 +47,26 @@ And look at `curl http://localhost:9740/metrics` to see the metrics.
 ## CLI options
 
 ```
---auto-fetch PATH    fetch relay list from https://chatmail.at/relays and write
-                     to PATH before starting
-RELAYS               Relay list file(s), one domain per line, # comments (positional arg)
+RELAYS               Relay list file(s), one domain per line, # comments (optional)
+-H, --hosts LIST     Comma-separated relay list overriding relay file(s)
+--auto-fetch PATH    Fetch relay list from https://chatmail.at/relays and write to PATH
 --scan               Self-probe all relays, print ranked by RTT, then exit
 --top N              Number of fastest relays to highlight in --scan output (default: 10)
 --port PORT          HTTP listen port (default: off, e.g. --port 9740)
 --textfile PATH      Write .prom file for node_exporter textfile collector
---interval SECS      Seconds between probe rounds (default: 900 = 15min)
---count N            Pings per pair per round (default: 5)
+-i, --interval SECS  Seconds between probe rounds (default: 900 = 15min)
+-n, --count N        Pings per pair per round (default: 5)
 --ping-interval S    Seconds between pings within a probe (default: 0.1)
---timeout SECS       Per-pair receive timeout in seconds (default: 90)
---workers N          Max concurrent probe threads (default: 5)
+-t, --timeout SECS   Per-pair receive timeout in seconds (default: 90)
+-w, --workers N      Max concurrent probe threads (default: 5)
 --cache-dir PATH     Base dir for per-worker account directories (default: ~/.cache/chatmail-prober)
---reset              Remove all account dirs, force fresh account creation
+--reset [DOMAIN...]  Reset cached accounts; "all" resets all, DOMAIN args reset only those
 --exclude PATH       File of pairs to skip: "src->dst" per line (# comments)
---once               Run one round then exit
+-1, --once           Run one round then exit
+-p, --print          Print tabular summary to stdout after --once exits
+-m, --print-metrics  Print Prometheus metrics to stdout after --once exits
 -v                   Debug logging (-vv for debug+rpc/deltachat events)
--q / --quiet         Suppress progress output (only show warnings/errors)
+-q, --quiet          Suppress progress output (only show warnings/errors)
 ```
 
 You can combine `--auto-fetch` with static relay file(s) to merge both lists:
@@ -97,6 +99,7 @@ A SIGUSR2 signal (`kill -USR2`) cycles verbosity: quiet -> normal -> debug -> de
 | `cmping_account_setup_seconds` | Gauge   | Time spent on account setup                         |
 | `cmping_last_round_completion_timestamp` | Gauge | Unix timestamp of last completed round  |
 | `cmping_round_duration_seconds` | Gauge   | Wall-clock time of last completed round              |
+| `cmping_rounds_total`          | Counter | Total number of probe rounds completed since start  |
 | `cmping_relay_status`          | Gauge   | Relay alive-check status (1=online, 0=unknown, negative=error category) |
 
 Per-pair metrics have `source`, `destination`, and `probe_type` labels.
