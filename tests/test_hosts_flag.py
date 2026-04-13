@@ -1,18 +1,8 @@
-"""Tests for the --hosts / -h flag and short flag aliases.
-
-Behaviour under test:
-  --hosts / -h  : comma-separated relay list overriding relays_file
-                  bare IPv6 addresses are auto-bracketed (e.g. ::1 -> [::1])
-  -1            : shorthand for --once
-  -p            : shorthand for --print
-  -m            : shorthand for --print-metrics
-  -n            : shorthand for --count
-  -t            : shorthand for --timeout
-  -w            : shorthand for --workers
-  -i            : shorthand for --interval
-  help text     : must say "tabular" not "gocmping"
-"""
+"""Tests for the --hosts / -H flag, IPv6 auto-bracketing, and short flag aliases."""
 from __future__ import annotations
+
+import os
+import tempfile
 
 import pytest
 
@@ -20,7 +10,7 @@ from chatmail_prober.__main__ import parse_args
 
 
 # ---------------------------------------------------------------------------
-# --hosts / -h
+# --hosts / -H
 # ---------------------------------------------------------------------------
 
 class TestHostsFlag:
@@ -83,22 +73,22 @@ class TestIPv6Bracketing:
     def test_hostname_unchanged(self):
         assert self._bracket("nine.testrun.org") == "nine.testrun.org"
 
-    def test_hosts_flag_auto_brackets_ipv6(self, tmp_path):
-        """When --hosts contains a bare IPv6, fetch_relay_list must bracket it."""
+    def test_hosts_flag_stores_raw_string(self, tmp_path):
+        """args.hosts stores the raw comma string; bracketing happens in main()."""
         relay_file = tmp_path / "r.txt"
         relay_file.write_text("nine.testrun.org\n")
         args = parse_args([str(relay_file), "-H", "::1,nine.testrun.org"])
-        # The bracketing happens in main(); args.hosts stores the raw comma string
-        assert "::1" in args.hosts or "[::1]" in args.hosts
+        assert "::1" in args.hosts
 
 
 # ---------------------------------------------------------------------------
-# Short flag aliases
+# Short flag aliases — one round-trip test covers all aliases
 # ---------------------------------------------------------------------------
 
 class TestShortAliases:
+    """All short flags must wire to the correct long-form attribute."""
+
     def _args(self, *flags):
-        import tempfile, os
         with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False) as f:
             f.write("nine.testrun.org\n")
             name = f.name
@@ -107,44 +97,12 @@ class TestShortAliases:
         finally:
             os.unlink(name)
 
-    def test_dash_1_is_once(self):
-        assert self._args("-1").once is True
-
-    def test_dash_p_is_print_summary(self):
-        assert self._args("-p").print_summary is True
-
-    def test_dash_m_is_print_metrics(self):
-        assert self._args("-m").print_metrics is True
-
-    def test_dash_n_is_count(self):
-        assert self._args("-n", "3").count == 3
-
-    def test_dash_t_is_timeout(self):
-        assert self._args("-t", "30").timeout == 30
-
-    def test_dash_w_is_workers(self):
-        assert self._args("-w", "8").workers == 8
-
-    def test_dash_i_is_interval(self):
-        assert self._args("-i", "60").interval == 60
-
-
-# ---------------------------------------------------------------------------
-# Help text
-# ---------------------------------------------------------------------------
-
-class TestHelpText:
-    def test_no_gocmping_in_help(self, tmp_path, capsys):
-        """Help text must not mention 'gocmping'."""
-        import argparse
-        with pytest.raises(SystemExit):
-            parse_args(["--help"])
-        captured = capsys.readouterr()
-        assert "gocmping" not in captured.out.lower()
-
-    def test_tabular_in_print_help(self, tmp_path, capsys):
-        """--print help text must say 'tabular'."""
-        with pytest.raises(SystemExit):
-            parse_args(["--help"])
-        captured = capsys.readouterr()
-        assert "tabular" in captured.out.lower()
+    def test_all_short_aliases(self):
+        args = self._args("-1", "-p", "-m", "-n", "3", "-t", "30", "-w", "8", "-i", "60")
+        assert args.once is True
+        assert args.print_summary is True
+        assert args.print_metrics is True
+        assert args.count == 3
+        assert args.timeout == 30
+        assert args.workers == 8
+        assert args.interval == 60

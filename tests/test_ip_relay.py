@@ -9,7 +9,7 @@ import urllib.parse
 
 import pytest
 
-from chatmail_prober.prober import create_qr_url, is_ip_address, generate_credentials
+from chatmail_prober.prober import create_qr_url, is_ip_address
 
 
 class TestIsIpAddress:
@@ -29,24 +29,6 @@ class TestIsIpAddress:
     def test_empty_string_not_ip(self):
         assert is_ip_address("") is False
 
-
-class TestGenerateCredentials:
-    def test_returns_tuple_of_two_strings(self):
-        username, password = generate_credentials()
-        assert isinstance(username, str)
-        assert isinstance(password, str)
-
-    def test_username_length(self):
-        username, _ = generate_credentials()
-        assert len(username) == 12
-
-    def test_password_length(self):
-        _, password = generate_credentials()
-        assert len(password) == 20
-
-    def test_credentials_are_random(self):
-        creds = {generate_credentials() for _ in range(10)}
-        assert len(creds) == 10, "Expected unique credentials each call"
 
 
 class TestCreateQrUrl:

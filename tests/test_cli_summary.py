@@ -119,7 +119,7 @@ class TestSuccessRows:
         # p50 of [500, 600, 700] = 600
         out = _render([_ok(rtts=[500.0, 600.0, 700.0])],
                       ["a.example", "b.example"], [], elapsed_s=5.0)
-        assert "600" in out
+        assert "600ms" in out
 
     def test_setup_time_in_ms(self):
         # 6.66 s -> 6660.00ms
