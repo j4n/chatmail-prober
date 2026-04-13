@@ -227,7 +227,14 @@ def parse_args(argv=None):
         "--print-metrics",
         action="store_true",
         default=False,
-        help="print Prometheus metrics to stdout after each probe round (useful with --once for debugging)",
+        help="print Prometheus metrics to stdout after --once exits (requires --once)",
+    )
+    parser.add_argument(
+        "--print",
+        dest="print_summary",
+        action="store_true",
+        default=False,
+        help="print gocmping-style summary to stdout after --once exits (requires --once)",
     )
     return parser.parse_args(argv)
 
@@ -753,11 +760,12 @@ def main(argv=None):
                 write_textfile(args.textfile)
 
             if args.once or stop_after_round.is_set():
-                alive_set = set(relays)
-                dead_relays = [r for r in all_relays if r not in alive_set]
-                render_summary(
-                    round_results, relays, dead_relays, elapsed_s=elapsed
-                )
+                if args.print_summary:
+                    alive_set = set(relays)
+                    dead_relays = [r for r in all_relays if r not in alive_set]
+                    render_summary(
+                        round_results, relays, dead_relays, elapsed_s=elapsed
+                    )
                 if args.print_metrics:
                     print_metrics()
                 break
