@@ -1,12 +1,10 @@
-"""RED tests for the cli_summary module.
+"""Tests for the cli_summary module.
 
 cli_summary.render(results, alive_relays, dead_relays, elapsed_s)
-must produce a gocmping-style terminal block that includes:
-  - Packet statistics per pair (transmitted / received / loss%)
-  - RTT statistics (min / p50 / p90 / p95 / p99 / avg / mdev)
-  - Phase timing (account setup, message send/recv)
-  - Failure summary block (grouped by failure_category)
-  - Overall summary line (success_count / total / elapsed)
+must produce a compact table that includes:
+  - One row per probe pair with Sent/Recv/Loss/p50/p90/p99/mdev/Setup/Msg
+  - Failure block below the table (grouped by failure_category)
+  - Overall summary footer (alive/dead/probes/elapsed)
 """
 from __future__ import annotations
 
@@ -64,27 +62,28 @@ class TestModuleExists:
 # ---------------------------------------------------------------------------
 
 class TestPacketStatistics:
-    def test_section_header_present(self):
+    def test_route_column_header_present(self):
         out = _render([_make_ok_result()], [], [], elapsed_s=10.0)
-        assert "Packet Statistics" in out
+        assert "Route" in out
 
     def test_route_line_present(self):
         out = _render([_make_ok_result("nine.testrun.org", "mailchat.pl")], [], [], elapsed_s=10.0)
         assert "nine.testrun.org" in out
         assert "mailchat.pl" in out
 
-    def test_transmitted_received_loss(self):
+    def test_sent_recv_loss_columns_present(self):
         out = _render([_make_ok_result()], [], [], elapsed_s=10.0)
-        assert "transmitted" in out.lower() or "sent" in out.lower()
-        assert "received" in out.lower()
-        assert "0.00%" in out or "loss" in out.lower()
+        assert "Sent" in out
+        assert "Recv" in out
+        assert "Loss" in out
+        assert "0.0%" in out
 
     def test_partial_loss_shown(self):
         r = ProbeResult(source="a.example", destination="b.example",
                         sent=5, received=3, loss=40.0,
                         rtts_ms=[1000.0, 1100.0, 1200.0])
         out = _render([r], [], [], elapsed_s=10.0)
-        assert "40.00%" in out or "40%" in out
+        assert "40.0%" in out
 
 
 # ---------------------------------------------------------------------------
@@ -92,30 +91,26 @@ class TestPacketStatistics:
 # ---------------------------------------------------------------------------
 
 class TestRttStatistics:
-    def test_section_header_present(self):
+    def test_rtt_column_headers_present(self):
         out = _render([_make_ok_result()], [], [], elapsed_s=10.0)
-        assert "RTT" in out
+        assert "p50" in out
+        assert "p90" in out
+        assert "p99" in out
+        assert "mdev" in out
 
-    def test_min_shown(self):
+    def test_p50_value_shown(self):
+        # p50 of [500, 600, 700] = 600
         out = _render([_make_ok_result(rtts=[500.0, 600.0, 700.0])], [], [], elapsed_s=10.0)
-        assert "500" in out  # min RTT
-
-    def test_p50_shown(self):
-        out = _render([_make_ok_result(rtts=[500.0, 600.0, 700.0])], [], [], elapsed_s=10.0)
-        assert "p50" in out.lower() or "median" in out.lower()
-
-    def test_p90_shown(self):
-        out = _render([_make_ok_result()], [], [], elapsed_s=10.0)
-        assert "p90" in out.lower()
+        assert "600" in out
 
     def test_mdev_shown(self):
         out = _render([_make_ok_result()], [], [], elapsed_s=10.0)
         assert "mdev" in out.lower()
 
-    def test_no_rtt_section_for_failed_probe(self):
+    def test_failed_probe_shows_dash_for_rtt(self):
         out = _render([_make_failed_result()], [], [], elapsed_s=10.0)
-        # RTT section should be absent or clearly marked N/A for failed probes
-        assert "RTT" not in out or "n/a" in out.lower() or "failed" in out.lower()
+        # Failed rows show category in p50 column, dashes for p90/p99/mdev
+        assert "-" in out
 
 
 # ---------------------------------------------------------------------------
