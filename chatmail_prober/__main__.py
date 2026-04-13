@@ -8,11 +8,14 @@ import argparse
 import gc
 import logging
 import os
+import re
 import resource
+import shutil
 import signal
 import subprocess
 import threading
 import time
+import urllib.request
 from concurrent.futures import (
     ThreadPoolExecutor,
     TimeoutError as FuturesTimeoutError,
@@ -100,8 +103,6 @@ def fetch_relay_list(url, dest):
 
     Parses chatmail.at/relays HTML: extracts text from <a class="hilite"> tags.
     """
-    import re
-    import urllib.request
     with urllib.request.urlopen(url, timeout=30) as resp:
         html = resp.read().decode()
     domains = re.findall(r'class="hilite">([^<]+)', html)
@@ -587,7 +588,6 @@ def main(argv=None):
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     if args.reset:
-        import shutil
         for child in cache_dir.iterdir():
             if child.is_dir() and child.name != "alive-check":
                 shutil.rmtree(child)
