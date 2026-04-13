@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -389,26 +390,21 @@ def _perform_direct_ping(relay_contexts, source, dest, count, interval, timeout)
         needs_wait.append((receiver_maker, receiver))
 
     if needs_wait:
-        errors = []
-
-        def _wait_one(maker, account):
-            try:
-                maker.wait_account_online(account, timeout=timeout)
-            except Exception as e:
-                errors.append(e)
-
-        threads = []
-        for maker, acct in needs_wait:
-            t = threading.Thread(target=_wait_one, args=(maker, acct))
-            t.start()
-            threads.append(t)
-        for t in threads:
-            t.join()
-
-        if errors:
+        # Use a small executor so exceptions propagate cleanly via future.result()
+        # instead of being collected in a shared list from daemon threads.
+        with ThreadPoolExecutor(max_workers=len(needs_wait)) as pool:
+            futures = [
+                pool.submit(maker.wait_account_online, acct, timeout)
+                for maker, acct in needs_wait
+            ]
+        # Executor.__exit__ waits for all futures; re-raise the first error.
+        first_exc = next(
+            (f.exception() for f in futures if f.exception() is not None), None
+        )
+        if first_exc is not None:
             raise PingError(
-                f"Timeout or error waiting for profiles to be online: {errors[0]}"
-            ) from errors[0]
+                f"Timeout or error waiting for profiles to be online: {first_exc}"
+            ) from first_exc
 
     account_setup_time = time.time() - account_setup_start
 
