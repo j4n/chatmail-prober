@@ -39,10 +39,20 @@ def configure_logging(
     # ------------------------------------------------------------------
     # Shared processors: run for every log record regardless of renderer
     # ------------------------------------------------------------------
+
+    def _shorten_level(
+        logger: object, method: str, event_dict: dict
+    ) -> dict:
+        """Rename 'warning' -> 'warn' for more compact JSON/console output."""
+        if event_dict.get("level") == "warning":
+            event_dict["level"] = "warn"
+        return event_dict
+
     shared_processors: list = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
+        _shorten_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.StackInfoRenderer(),

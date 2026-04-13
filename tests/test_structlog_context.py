@@ -77,7 +77,7 @@ class TestRunRoundContextBinding:
         captured = capsys.readouterr()
         warning_lines = [
             json.loads(l) for l in captured.err.splitlines()
-            if l.strip() and '"level": "warning"' in l
+            if l.strip() and '"level": "warn"' in l
         ]
         assert warning_lines, "expected at least one warning log line"
         # Every warning about a failed probe must carry src and dst
@@ -111,7 +111,7 @@ class TestRunRoundContextBinding:
         captured = capsys.readouterr()
         warning_lines = [
             json.loads(l) for l in captured.err.splitlines()
-            if l.strip() and '"level": "warning"' in l
+            if l.strip() and '"level": "warn"' in l
         ]
         probe_warnings = [l for l in warning_lines if "rpc crash" in str(l)]
         assert probe_warnings
@@ -182,7 +182,7 @@ class TestCheckRelaysAliveContextBinding:
         captured = capsys.readouterr()
         warning_lines = [
             json.loads(l) for l in captured.err.splitlines()
-            if l.strip() and '"level": "warning"' in l
+            if l.strip() and '"level": "warn"' in l
         ]
         dead_warnings = [l for l in warning_lines if "DNS failure" in str(l) or "DEAD" in str(l.get("event", ""))]
         assert dead_warnings, "expected DEAD warning"
