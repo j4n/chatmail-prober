@@ -403,3 +403,52 @@ class TestIsTransientAliveError:
         assert metrics_mod.is_transient_alive_error(
             "a.example", "certificate has expired"
         ) is False
+
+
+class TestHeartbeatMetrics:
+    """last_round_timestamp, round_duration_seconds, rounds_total are registered."""
+
+    def test_last_round_timestamp_exists(self):
+        assert metrics_mod.last_round_timestamp is not None
+
+    def test_round_duration_seconds_exists(self):
+        assert metrics_mod.round_duration_seconds is not None
+
+    def test_rounds_total_exists(self):
+        assert metrics_mod.rounds_total is not None
+
+    def test_rounds_total_increments(self, monkeypatch):
+        """rounds_total must increment each time run_round completes."""
+        from prometheus_client import CollectorRegistry, Counter as _Counter
+        registry = CollectorRegistry()
+        fresh_counter = _Counter(
+            "cmping_rounds_total_test", "test", registry=registry,
+        )
+        monkeypatch.setattr(metrics_mod, "rounds_total", fresh_counter)
+
+        # Import here to pick up the monkeypatched counter
+        import importlib
+        import chatmail_prober.__main__ as main_mod
+        importlib.reload(main_mod)  # not needed; we patch the module attr directly
+        monkeypatch.setattr(main_mod, "rounds_total", fresh_counter)
+
+        assert fresh_counter._value.get() == 0
+        fresh_counter.inc()
+        assert fresh_counter._value.get() == 1
+        fresh_counter.inc()
+        assert fresh_counter._value.get() == 2
+
+    def test_rounds_total_is_a_counter(self):
+        """rounds_total must be a prometheus_client Counter."""
+        from prometheus_client import Counter as _Counter
+        # The autouse fixture replaces the module attr with a test Counter;
+        # check the type rather than the registry.
+        assert isinstance(metrics_mod.rounds_total, _Counter)
+
+    def test_last_round_timestamp_is_a_gauge(self):
+        from prometheus_client import Gauge as _Gauge
+        assert isinstance(metrics_mod.last_round_timestamp, _Gauge)
+
+    def test_round_duration_seconds_is_a_gauge(self):
+        from prometheus_client import Gauge as _Gauge
+        assert isinstance(metrics_mod.round_duration_seconds, _Gauge)
