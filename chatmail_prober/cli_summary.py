@@ -1,24 +1,17 @@
-"""cli_summary — gocmping-style terminal summary for --once mode.
+"""cli_summary — compact table summary for --print / --once mode.
 
-Renders a human-readable block to *out* (default: sys.stdout) after a
-single probe round completes.  The output mirrors the gocmping layout:
+Renders a human-readable table to *out* (default: sys.stdout) after a
+single probe round completes.  Each probe pair occupies one row::
 
-    Packet Statistics
-      route           : src -> dst
-      transmitted     : 5 / received : 5 / loss : 0.00%
+    Route                                    Sent  Recv  Loss    p50    p90    p99   mdev  Setup   Msg
+    nine.testrun.org -> nine.testrun.org        3     3   0.0%  2271   2316   2326    431   4.8s   3.2s
+    nine.testrun.org -> mailchat.pl             3     3   0.0%  2571   2614   2624    443   4.8s   3.2s
+    mailchat.pl      -> nine.testrun.org        3     3   0.0%  2860   3486   3627    785   4.8s   3.2s
+    mailchat.pl      -> mailchat.pl             3     3   0.0%  2719   3356   3499    826   4.8s   3.2s
 
-    RTT Statistics (ms)
-      min: 900  p50: 1050  p90: 1180  p95: 1190  p99: 1198  avg: 1050  mdev: 108
+    Failures (0)
 
-    Timing
-      account setup   : 3.50s
-      message send/recv : 2.10s
-
-    Failures (1)
-      timeout         : a.example -> b.example
-
-    Summary
-      alive: 2  dead: 1  probes: 4/5 ok  elapsed: 42.3s
+    Alive: 2  Dead: 0  Probes: 4/4 ok  Elapsed: 9.5s
 """
 from __future__ import annotations
 
@@ -28,21 +21,27 @@ from typing import IO, Sequence
 
 from chatmail_prober.prober import ProbeResult
 
-
-def _fmt(value: float | None, decimals: int = 0) -> str:
-    """Format a float to *decimals* places, or 'n/a' if None."""
-    if value is None:
-        return "n/a"
-    return f"{value:.{decimals}f}"
-
-
-def _section(title: str, out: IO[str]) -> None:
-    out.write(f"\n{title}\n")
+# Column widths (characters).  Route column is computed dynamically.
+_W_SENT  = 5
+_W_RECV  = 5
+_W_LOSS  = 6
+_W_RTT   = 6   # p50 / p90 / p99 / mdev
+_W_TIME  = 6   # Setup / Msg
 
 
-def _row(label: str, value: str, out: IO[str], indent: int = 2) -> None:
-    pad = " " * indent
-    out.write(f"{pad}{label:<22}: {value}\n")
+def _rtt(value: float | None) -> str:
+    """Format an RTT value (ms) as a right-aligned integer string, or '-'."""
+    return "-" if value is None else f"{value:.0f}"
+
+
+def _time(value: float) -> str:
+    """Format a timing value in seconds to one decimal place."""
+    return f"{value:.1f}s"
+
+
+def _loss(value: float) -> str:
+    """Format a loss percentage to one decimal place."""
+    return f"{value:.1f}%"
 
 
 def render(
@@ -52,7 +51,7 @@ def render(
     elapsed_s: float,
     out: IO[str] | None = None,
 ) -> None:
-    """Render a gocmping-style summary block to *out*.
+    """Render a compact table summary to *out*.
 
     Parameters
     ----------
@@ -70,76 +69,92 @@ def render(
     if out is None:
         out = sys.stdout
 
-    ok_results = [r for r in results if r.error is None]
+    ok_results     = [r for r in results if r.error is None]
     failed_results = [r for r in results if r.error is not None]
 
     # ------------------------------------------------------------------
-    # Packet Statistics
+    # Compute route column width so all rows line up.
     # ------------------------------------------------------------------
-    _section("Packet Statistics", out)
-    for r in results:
-        _row("route", f"{r.source} -> {r.destination}", out)
-        loss_str = f"{r.loss:.2f}%"
-        _row(
-            "transmitted",
-            f"{r.sent} / received : {r.received} / loss : {loss_str}",
-            out,
-        )
+    route_strs = [f"{r.source} -> {r.destination}" for r in results]
+    route_w = max((len(s) for s in route_strs), default=5)
+    route_w = max(route_w, len("Route"))
 
     # ------------------------------------------------------------------
-    # RTT Statistics
+    # Header
     # ------------------------------------------------------------------
-    if ok_results:
-        _section("RTT Statistics (ms)", out)
-        for r in ok_results:
-            if not r.rtts_ms:
-                continue
-            min_ms = min(r.rtts_ms)
-            rtt_line = (
-                f"min: {_fmt(min_ms)}  "
-                f"p50: {_fmt(r.p50_ms)}  "
-                f"p90: {_fmt(r.p90_ms)}  "
-                f"p95: {_fmt(r.p95_ms)}  "
-                f"p99: {_fmt(r.p99_ms)}  "
-                f"avg: {_fmt(r.avg_ms)}  "
-                f"mdev: {_fmt(r.mdev_ms)}"
+    header = (
+        f"{'Route':<{route_w}}"
+        f"  {'Sent':>{_W_SENT}}"
+        f"  {'Recv':>{_W_RECV}}"
+        f"  {'Loss':>{_W_LOSS}}"
+        f"  {'p50':>{_W_RTT}}"
+        f"  {'p90':>{_W_RTT}}"
+        f"  {'p99':>{_W_RTT}}"
+        f"  {'mdev':>{_W_RTT}}"
+        f"  {'Setup':>{_W_TIME}}"
+        f"  {'Msg':>{_W_TIME}}"
+    )
+    separator = "-" * len(header)
+    out.write(f"\n{header}\n{separator}\n")
+
+    # ------------------------------------------------------------------
+    # Rows
+    # ------------------------------------------------------------------
+    for route, r in zip(route_strs, results):
+        if r.error is None:
+            # Successful probe — show full stats.
+            row = (
+                f"{route:<{route_w}}"
+                f"  {r.sent:>{_W_SENT}}"
+                f"  {r.received:>{_W_RECV}}"
+                f"  {_loss(r.loss):>{_W_LOSS}}"
+                f"  {_rtt(r.p50_ms):>{_W_RTT}}"
+                f"  {_rtt(r.p90_ms):>{_W_RTT}}"
+                f"  {_rtt(r.p99_ms):>{_W_RTT}}"
+                f"  {_rtt(r.mdev_ms):>{_W_RTT}}"
+                f"  {_time(r.account_setup_time):>{_W_TIME}}"
+                f"  {_time(r.message_time):>{_W_TIME}}"
             )
-            _row(f"{r.source} -> {r.destination}", rtt_line, out)
+        else:
+            # Failed probe — show category in the p50 column, dashes elsewhere.
+            category = r.failure_category or "unknown"
+            row = (
+                f"{route:<{route_w}}"
+                f"  {r.sent:>{_W_SENT}}"
+                f"  {r.received:>{_W_RECV}}"
+                f"  {'100.0%':>{_W_LOSS}}"
+                f"  {category:>{_W_RTT}}"
+                f"  {'-':>{_W_RTT}}"
+                f"  {'-':>{_W_RTT}}"
+                f"  {'-':>{_W_RTT}}"
+                f"  {'-':>{_W_TIME}}"
+                f"  {'-':>{_W_TIME}}"
+            )
+        out.write(f"{row}\n")
 
     # ------------------------------------------------------------------
-    # Timing
+    # Failures block (grouped by category, below the table)
     # ------------------------------------------------------------------
-    _section("Timing", out)
-    if ok_results:
-        avg_setup = sum(r.account_setup_time for r in ok_results) / len(ok_results)
-        avg_msg = sum(r.message_time for r in ok_results) / len(ok_results)
-        _row("account setup", f"{avg_setup:.2f}s", out)
-        _row("message send/recv", f"{avg_msg:.2f}s", out)
-    else:
-        _row("account setup", "n/a", out)
-        _row("message send/recv", "n/a", out)
-
-    # ------------------------------------------------------------------
-    # Failures
-    # ------------------------------------------------------------------
+    out.write("\n")
     if failed_results:
-        _section(f"Failures ({len(failed_results)})", out)
         by_category: dict[str, list[ProbeResult]] = defaultdict(list)
         for r in failed_results:
-            category = r.failure_category or "unknown"
-            by_category[category].append(r)
+            by_category[r.failure_category or "unknown"].append(r)
+        out.write(f"Failures ({len(failed_results)})\n")
         for category, items in sorted(by_category.items()):
             pairs = ", ".join(f"{r.source} -> {r.destination}" for r in items)
-            _row(category, pairs, out)
+            out.write(f"  {category}: {pairs}\n")
+        out.write("\n")
 
     # ------------------------------------------------------------------
-    # Summary
+    # Summary footer
     # ------------------------------------------------------------------
-    _section("Summary", out)
-    total_probes = len(results)
-    ok_count = len(ok_results)
-    _row("alive", str(len(alive_relays)), out)
-    _row("dead", str(len(dead_relays)), out)
-    _row("probes", f"{ok_count}/{total_probes} ok", out)
-    _row("elapsed", f"{elapsed_s:.1f}s", out)
-    out.write("\n")
+    total   = len(results)
+    ok_cnt  = len(ok_results)
+    alive_n = len(alive_relays)
+    dead_n  = len(dead_relays)
+    out.write(
+        f"Alive: {alive_n}  Dead: {dead_n}"
+        f"  Probes: {ok_cnt}/{total} ok"
+        f"  Elapsed: {elapsed_s:.1f}s\n"
+    )
