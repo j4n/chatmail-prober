@@ -1,4 +1,0 @@
-[submodule "esnet-matrix-panel"]
-	path = esnet-matrix-panel
-	url = https://github.com/j4n/esnet-matrix-panel.git
-	branch = responsive-extralabels
