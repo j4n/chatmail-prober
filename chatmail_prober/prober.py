@@ -13,6 +13,7 @@ import logging
 import os
 import queue
 import random
+import statistics
 import shutil
 import string
 import sys
@@ -37,7 +38,8 @@ def _ensure_venv_on_path():
 
 _ensure_venv_on_path()
 
-log = logging.getLogger(__name__)
+from chatmail_prober.log_config import get_logger
+log = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -166,17 +168,21 @@ class AccountMaker:
 
     def wait_account_online(self, account, timeout=None):
         """Wait for a single account to reach IMAP_INBOX_IDLE."""
+        addr = account.get_config("addr") or account.get_config("configured_addr") or "unknown"
+        log.debug("join_start", addr=addr)
+        join_start = time.time()
         deadline = time.time() + timeout if timeout is not None else None
         eq = account._rpc.get_queue(account.id)
         while True:
             if deadline is not None and time.time() >= deadline:
-                addr = account.get_config("addr")
                 raise PingError(f"Timeout waiting for {addr} to come online")
             try:
                 event = AttrDict(eq.get(timeout=1.0))
             except queue.Empty:
                 continue
             if event.kind == EventType.IMAP_INBOX_IDLE:
+                log.debug("join_done", addr=addr,
+                          elapsed_s=round(time.time() - join_start, 3))
                 return
             elif event.kind == EventType.ERROR:
                 log.warning("ERROR during profile setup: %s", event.msg)
@@ -217,6 +223,10 @@ class AccountMaker:
             if addr and addr.split("@")[1] == domain:
                 return account, True
 
+        # New account needed — emit setup phase events.
+        log.debug("setup_start", relay=domain)
+        setup_start = time.time()
+
         # Find a configured-but-offline account, or create a new one.
         found = None
         for account in self.dc.get_all_accounts():
@@ -235,6 +245,8 @@ class AccountMaker:
             found.set_config_from_qr(qr_url)
 
         self._add_online(found)
+        log.debug("setup_done", relay=domain,
+                  elapsed_s=round(time.time() - setup_start, 3))
         return found, False
 
 
@@ -493,6 +505,33 @@ class RelayPool:
 # ProbeResult / run_probe -- public API for the exporter
 # ---------------------------------------------------------------------------
 
+_FAILURE_CATEGORY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("timeout", "timed out", "deadline"),       "timeout"),
+    (("connection refused", "connectionrefused"), "connection_refused"),
+    (("name or service not known", "getaddrinfo",
+      "dns resolution", "no such host", "nxdomain"), "dns"),
+    (("ssl", "certificate"),                       "tls"),
+    (("auth", "authentication"),                   "auth"),
+    (("failed to setup",),                         "setup"),
+)
+
+
+def _classify_error(error: str | None) -> str | None:
+    """Map a probe error string to a failure category label.
+
+    Returns one of ``"timeout"``, ``"connection_refused"``, ``"dns"``,
+    ``"tls"``, ``"auth"``, ``"setup"``, or ``"unknown"``; returns ``None``
+    when *error* is ``None`` (i.e. the probe succeeded).
+    """
+    if error is None:
+        return None
+    lower = error.lower()
+    for keywords, category in _FAILURE_CATEGORY_MAP:
+        if any(kw in lower for kw in keywords):
+            return category
+    return "unknown"
+
+
 @dataclass
 class ProbeResult:
     source: str
@@ -504,6 +543,56 @@ class ProbeResult:
     account_setup_time: float = 0.0
     message_time: float = 0.0
     error: str | None = None
+    failure_category: str | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        self.failure_category = _classify_error(self.error)
+
+    # ------------------------------------------------------------------
+    # Latency distribution helpers (all in milliseconds)
+    # ------------------------------------------------------------------
+
+    @property
+    def avg_ms(self) -> float | None:
+        """Mean RTT in ms, or None if no samples."""
+        return statistics.mean(self.rtts_ms) if self.rtts_ms else None
+
+    @property
+    def p50_ms(self) -> float | None:
+        """Median (p50) RTT in ms, or None if no samples."""
+        return statistics.median(self.rtts_ms) if self.rtts_ms else None
+
+    def _quantile(self, n: int) -> float | None:
+        """Return the last cut-point of n-quantiles (i.e. p(100*(n-1)/n))."""
+        if not self.rtts_ms:
+            return None
+        if len(self.rtts_ms) < 2:
+            return self.rtts_ms[0]
+        return statistics.quantiles(self.rtts_ms, n=n, method="inclusive")[-1]
+
+    @property
+    def p90_ms(self) -> float | None:
+        """90th-percentile RTT in ms, or None if no samples."""
+        return self._quantile(10)
+
+    @property
+    def p95_ms(self) -> float | None:
+        """95th-percentile RTT in ms, or None if no samples."""
+        return self._quantile(20)
+
+    @property
+    def p99_ms(self) -> float | None:
+        """99th-percentile RTT in ms, or None if no samples."""
+        return self._quantile(100)
+
+    @property
+    def mdev_ms(self) -> float | None:
+        """Mean deviation (stddev) of RTTs in ms, or None if no samples."""
+        if not self.rtts_ms:
+            return None
+        if len(self.rtts_ms) < 2:
+            return 0.0
+        return statistics.stdev(self.rtts_ms)
 
 
 def run_probe(
@@ -551,8 +640,12 @@ def run_probe(
             message_time=pinger.message_time,
         )
     except PingError as e:
-        log.debug("Probe %s -> %s failed: %s", source, dest, e)
-        return ProbeResult(source=source, destination=dest, error=str(e))
+        result = ProbeResult(source=source, destination=dest, error=str(e))
+        log.debug("probe_failed", src=source, dst=dest,
+                  failure_category=result.failure_category, error=str(e))
+        return result
     except Exception as e:
-        log.exception("Unexpected error probing %s -> %s", source, dest)
-        return ProbeResult(source=source, destination=dest, error=str(e))
+        result = ProbeResult(source=source, destination=dest, error=str(e))
+        log.exception("probe_failed", src=source, dst=dest,
+                      failure_category=result.failure_category, error=str(e))
+        return result
