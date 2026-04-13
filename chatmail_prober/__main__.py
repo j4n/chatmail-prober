@@ -227,6 +227,16 @@ def parse_args(argv=None):
         help='file of pairs to skip, one per line: "src->dst" (# comments allowed)',
     )
     parser.add_argument(
+        "-u", "--unreachable",
+        default=None,
+        metavar="FILE",
+        help=(
+            "file of known-unreachable relays (one per line); these are alive-checked "
+            "each round but excluded from the probe matrix. If one recovers it is "
+            "automatically promoted to the active set for that round."
+        ),
+    )
+    parser.add_argument(
         "--reset",
         nargs="*",
         metavar="DOMAIN",
@@ -369,37 +379,44 @@ def _kill_stale_rpc_servers(cache_dir, graceful=True):
         pass
 
 
-def check_relays_alive(relays, args, previously_dead=None):
+def check_relays_alive(relays, args, previously_dead=None, unreachable_relays=None):
     """Run a single self-probe (relay->itself, count=1) for each relay in parallel.
 
     Returns (alive, dead) where alive is the list of relays that succeeded
-    (in original order) and dead is a set of relay domains that failed.
+    (in original order) and dead is a dict {relay: error} of relays that failed.
     Dead relays are logged as warnings and excluded from the matrix.
 
     Relays that fail with transient errors (timeout, unknown) are retried
     up to 2 times -- unless they were already in previously_dead, meaning
     they failed last round too and retrying within the same window is
     unlikely to help.
+
+    unreachable_relays is an optional list of known-dead/unreachable relays
+    that are alive-checked but NOT included in the returned alive list unless
+    they recover.  Recovered unreachable relays are logged as
+    relay_recovered_from_unreachable and appended to the alive list.
     """
     if previously_dead is None:
         previously_dead = set()
+    unreachable_set: set[str] = set(unreachable_relays or [])
     cache_dir = Path(args.cache_dir).expanduser()
-
-    with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
+    # Include unreachable relays in the alive check so we can detect recovery.
+    all_check_relays = list(relays) + [r for r in unreachable_set if r not in relays]
+    with ThreadPoolExecutor(max_workers=min(len(all_check_relays), args.workers)) as pool:
         futures = {
             pool.submit(run_probe, r, r, 1, args.ping_interval,
                         str(cache_dir / "alive-check" / r), args.timeout // 2): r
-            for r in relays
+            for r in all_check_relays
         }
         dead = {}  # relay -> error string
         completed = set()
-        actual_workers = min(len(relays), args.workers)
-        batches = -(-len(relays) // actual_workers)  # ceil division
+        actual_workers = min(len(all_check_relays), args.workers)
+        batches = -(-len(all_check_relays) // actual_workers)  # ceil division
         deadline = args.timeout * (batches + 1)
         check_start = time.monotonic()
         timeout_at = time.time() + deadline
         log.warning("alive_check_start",
-                     count=len(relays), workers=actual_workers,
+                     count=len(all_check_relays), workers=actual_workers,
                      timeout_at=time.strftime('%H:%M:%S', time.localtime(timeout_at)))
         try:
             for future in as_completed(futures, timeout=deadline):
@@ -484,23 +501,29 @@ def check_relays_alive(relays, args, previously_dead=None):
         retryable = {r: dead[r] for r in retryable
                      if r in dead and is_transient_alive_error(r, dead[r])}
 
+    # Build alive list: normal relays that passed + unreachable relays that recovered.
     alive = [r for r in relays if r not in dead]
+    recovered_unreachable = [r for r in unreachable_set if r not in dead]
+    if recovered_unreachable:
+        log.warning("relay_recovered_from_unreachable",
+                    count=len(recovered_unreachable),
+                    relays=recovered_unreachable)
+        alive = alive + recovered_unreachable
     recovered = set(previously_dead) - set(dead)
     if recovered:
         log.warning("relays_recovered", count=len(recovered), relays=list(recovered))
     if dead:
         log.warning("relays_unreachable", count=len(dead), relays=list(dead))
-
-    # Update per-relay status metric; remove labels for relays dropped from config
-    clear_stale_relay_labels(relays)
-    for r in relays:
+    # Update per-relay status metric; remove labels for relays dropped from config.
+    # Include unreachable relays in the status metric so their recovery is visible.
+    all_known = list(relays) + list(unreachable_set)
+    clear_stale_relay_labels(all_known)
+    for r in all_known:
         relay_status.labels(relay=r).set(verify_relay_status(r, dead.get(r)))
-
     elapsed = time.monotonic() - check_start
     log.warning("alive_check_complete",
                 elapsed_s=round(elapsed, 1),
-                online=len(alive), total=len(relays))
-
+                online=len(alive), total=len(all_known))
     return alive, dead  # dead: dict[str, str | None]  (host -> error)
 
 
@@ -680,7 +703,12 @@ def main(argv=None):
             raise SystemExit("error: at least one relay list file, --hosts, or --auto-fetch is required")
         relays = read_relay_list(relay_files)
     log.info("Loaded %d relays: %s", len(relays), ", ".join(relays))
-
+    # Load known-unreachable relays (alive-checked only, not probed).
+    unreachable_relays: list[str] = []
+    if args.unreachable:
+        unreachable_relays = read_relay_list([args.unreachable])
+        log.info("Loaded %d unreachable relays: %s",
+                 len(unreachable_relays), ", ".join(unreachable_relays))
     exclude = set()
     if args.exclude:
         exclude = read_exclude_list(args.exclude)
@@ -767,7 +795,8 @@ def main(argv=None):
 
     all_relays = relays  # preserve full list for periodic re-checks
     previously_dead: dict[str, str | None] = {}
-    relays, previously_dead = check_relays_alive(all_relays, args)
+    relays, previously_dead = check_relays_alive(
+        all_relays, args, unreachable_relays=unreachable_relays)
     if not relays:
         raise SystemExit("No reachable relays -- aborting")
     log.info("continuing with %d/%d relays online, starting matrix probe", len(relays), len(all_relays))
@@ -805,7 +834,8 @@ def main(argv=None):
                     except Exception as e:
                         log.warning("Failed to refresh relay list: %s", e)
                 relays, previously_dead = check_relays_alive(
-                    all_relays, args, previously_dead=previously_dead)
+                    all_relays, args, previously_dead=previously_dead,
+                    unreachable_relays=unreachable_relays)
                 last_alive_check = time.monotonic()
                 log.info("continuing with %d/%d relays online, next check in %ds", len(relays), len(all_relays), interval)
 
