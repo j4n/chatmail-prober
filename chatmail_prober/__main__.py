@@ -102,6 +102,13 @@ def read_exclude_list(path):
     return excludes
 
 
+def _bracket_ipv6(host: str) -> str:
+    """Wrap a bare IPv6 address in square brackets; leave everything else unchanged."""
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
 def fetch_relay_list(url, dest):
     """Fetch relay domains from url, write to dest (one domain per line).
 
@@ -139,7 +146,7 @@ def parse_args(argv=None):
         help="path to write .prom file for node_exporter textfile collector",
     )
     parser.add_argument(
-        "--interval",
+        "-i", "--interval",
         type=int,
         default=900,
         help="seconds between probe rounds (default: 900 = 15min)",
@@ -151,7 +158,7 @@ def parse_args(argv=None):
         help="seconds between relay alive re-checks (default: 86400 = 24h, 0 = every round)",
     )
     parser.add_argument(
-        "--count",
+        "-n", "--count",
         type=int,
         default=5,
         help="number of pings per pair per round (default: 5)",
@@ -163,13 +170,13 @@ def parse_args(argv=None):
         help="seconds between individual pings within a probe (default: 0.1)",
     )
     parser.add_argument(
-        "--timeout",
+        "-t", "--timeout",
         type=int,
         default=90,
         help="per-pair receive timeout in seconds (default: 90)",
     )
     parser.add_argument(
-        "--workers",
+        "-w", "--workers",
         type=int,
         default=5,
         help="max concurrent probe threads (default: 5)",
@@ -180,7 +187,7 @@ def parse_args(argv=None):
         help="base dir for per-pair accounts (default: ~/.cache/chatmail-prober)",
     )
     parser.add_argument(
-        "--once",
+        "-1", "--once",
         action="store_true",
         help="run one probe round then exit (useful for testing)",
     )
@@ -224,17 +231,23 @@ def parse_args(argv=None):
         help="remove all account directories to force fresh account creation",
     )
     parser.add_argument(
-        "--print-metrics",
+        "-m", "--print-metrics",
         action="store_true",
         default=False,
         help="print Prometheus metrics to stdout after --once exits (requires --once)",
     )
     parser.add_argument(
-        "--print",
+        "-p", "--print",
         dest="print_summary",
         action="store_true",
         default=False,
-        help="print gocmping-style summary to stdout after --once exits (requires --once)",
+        help="print tabular summary to stdout after --once exits (requires --once)",
+    )
+    parser.add_argument(
+        "-H", "--hosts",
+        default=None,
+        metavar="HOST[,HOST...]",
+        help="comma-separated relay list overriding relay file(s); bare IPv6 addresses are auto-bracketed",
     )
     return parser.parse_args(argv)
 
@@ -604,13 +617,18 @@ def main(argv=None):
     except (ValueError, OSError):
         pass
 
-    relay_files = list(args.relays)
-    if args.auto_fetch:
-        fetch_relay_list(AUTO_FETCH_URL, args.auto_fetch)
-        relay_files.append(args.auto_fetch)
-    if not relay_files:
-        raise SystemExit("error: at least one relay list file or --auto-fetch is required")
-    relays = read_relay_list(relay_files)
+    if args.hosts is not None:
+        relays = [_bracket_ipv6(h.strip()) for h in args.hosts.split(",") if h.strip()]
+        if not relays:
+            raise SystemExit("error: --hosts list is empty")
+    else:
+        relay_files = list(args.relays)
+        if args.auto_fetch:
+            fetch_relay_list(AUTO_FETCH_URL, args.auto_fetch)
+            relay_files.append(args.auto_fetch)
+        if not relay_files:
+            raise SystemExit("error: at least one relay list file or --auto-fetch is required")
+        relays = read_relay_list(relay_files)
     log.info("Loaded %d relays: %s", len(relays), ", ".join(relays))
 
     exclude = set()
