@@ -193,12 +193,29 @@ def main(argv: list[str] | None = None) -> int:
         metavar="FLOAT",
         help="minimum fraction of expected matrix pairs (default: 0.80)",
     )
+    parser.add_argument(
+        "--exclude-unreachable", type=Path, default=None,
+        metavar="FILE",
+        help=(
+            "file of known-unreachable relays (one per line); these are excluded "
+            "from the expected matrix N so known-dead relays don't cause FAIL"
+        ),
+    )
     args = parser.parse_args(argv)
 
-    relays = _read_relays(*args.relays)
+    all_relays = _read_relays(*args.relays)
+    unreachable: set[str] = set()
+    if args.exclude_unreachable:
+        unreachable = set(_read_relays(args.exclude_unreachable))
+    relays = [r for r in all_relays if r not in unreachable]
     metrics = _parse_prom(args.prom)
 
-    print(f"Relay list  : {len(relays)} unique relays from {[str(f) for f in args.relays]}")
+    if unreachable:
+        print(f"Relay list  : {len(relays)} active relays "
+              f"({len(unreachable)} unreachable excluded) "
+              f"from {[str(f) for f in args.relays]}")
+    else:
+        print(f"Relay list  : {len(relays)} unique relays from {[str(f) for f in args.relays]}")
     print(f"Prom file   : {args.prom}  ({sum(len(v) for v in metrics.values())} samples)\n")
 
     checks = [
