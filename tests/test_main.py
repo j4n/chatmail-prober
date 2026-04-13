@@ -72,13 +72,16 @@ class TestParseArgs:
         assert args.quiet is True
         assert args.verbose == 0
 
-    def test_reset_flag(self):
-        args = parse_args(["r.txt", "--reset"])
-        assert args.reset is True
+    def test_reset_bare_errors(self):
+        # --reset with no domains must raise SystemExit with non-zero code
+        with pytest.raises(SystemExit) as exc_info:
+            parse_args(["r.txt", "--reset"])
+        assert exc_info.value.code != 0
 
-    def test_reset_default_false(self):
+    def test_reset_default_is_none(self):
+        # omitting --reset -> None (no reset)
         args = parse_args(["r.txt"])
-        assert args.reset is False
+        assert args.reset is None
 
     def test_all_flags(self):
         args = parse_args([

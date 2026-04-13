@@ -227,8 +227,10 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--reset",
-        action="store_true",
-        help="remove all account directories to force fresh account creation",
+        nargs="*",
+        metavar="DOMAIN",
+        default=None,
+        help="reset cached accounts; with no args resets all, with DOMAIN args resets only those domains",
     )
     parser.add_argument(
         "-m", "--print-metrics",
@@ -249,7 +251,45 @@ def parse_args(argv=None):
         metavar="HOST[,HOST...]",
         help="comma-separated relay list overriding relay file(s); bare IPv6 addresses are auto-bracketed",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.reset is not None and not args.reset:
+        parser.error(
+            "--reset requires at least one DOMAIN or 'all'\n"
+            "  examples: --reset all\n"
+            "            --reset nine.testrun.org mailchat.pl"
+        )
+    return args
+
+
+def reset_accounts(cache_dir: Path, domains: list[str]) -> None:
+    """Remove cached account directories.
+
+    Args:
+        cache_dir: base cache directory (e.g. ~/.cache/chatmail-prober)
+        domains:   ["all"]          -> full reset: wipe all worker-* dirs,
+                                       keep alive-check
+                   ["d1", "d2", ...]-> selective reset: wipe those domains
+                                       from every worker-* dir and alive-check/
+    """
+    if domains == ["all"]:
+        # Full reset: remove every worker-* subdirectory.
+        for child in cache_dir.iterdir():
+            if child.is_dir() and child.name != "alive-check":
+                shutil.rmtree(child)
+                log.info("Reset: removed %s", child)
+    else:
+        # Selective reset: remove the named domain from every worker dir
+        # and from alive-check/.
+        subdirs = [
+            child for child in cache_dir.iterdir()
+            if child.is_dir()
+        ]
+        for subdir in subdirs:
+            for domain in domains:
+                target = subdir / domain
+                if target.exists():
+                    shutil.rmtree(target)
+                    log.info("Reset: removed %s", target)
 
 
 def scan_relays(relays, args):
@@ -638,11 +678,8 @@ def main(argv=None):
     cache_dir = Path(args.cache_dir).expanduser()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.reset:
-        for child in cache_dir.iterdir():
-            if child.is_dir() and child.name != "alive-check":
-                shutil.rmtree(child)
-                log.info("Reset: removed %s", child)
+    if args.reset is not None:
+        reset_accounts(cache_dir, domains=args.reset)
 
     if args.scan:
         scan_relays(relays, args)
