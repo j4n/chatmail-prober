@@ -91,12 +91,14 @@ last_round_timestamp = Gauge(
     "Unix timestamp of the last completed probe round (for staleness alerting)",
     registry=CMPING_REGISTRY,
 )
+last_round_timestamp.set(float("nan"))  # NaN until first round completes
 
 round_duration_seconds = Gauge(
     "cmping_round_duration_seconds",
     "Wall-clock duration of the last completed probe round",
     registry=CMPING_REGISTRY,
 )
+round_duration_seconds.set(float("nan"))  # NaN until first round completes
 
 rounds_total = Counter(
     "cmping_rounds_total",
