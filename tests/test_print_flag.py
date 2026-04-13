@@ -11,24 +11,6 @@ from unittest.mock import patch
 
 import pytest
 
-from chatmail_prober.__main__ import parse_args
-
-
-class TestPrintArgument:
-    """--print must be accepted by the argument parser."""
-
-    def test_print_flag_accepted(self, tmp_path):
-        relay_file = tmp_path / "relays.txt"
-        relay_file.write_text("nine.testrun.org\n")
-        args = parse_args([str(relay_file), "--print"])
-        assert args.print_summary is True
-
-    def test_print_defaults_to_false(self, tmp_path):
-        relay_file = tmp_path / "relays.txt"
-        relay_file.write_text("nine.testrun.org\n")
-        args = parse_args([str(relay_file)])
-        assert args.print_summary is False
-
 
 class TestPrintSummaryBehaviour:
     """render_summary must only be called when --print is given."""

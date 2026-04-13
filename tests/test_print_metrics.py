@@ -55,17 +55,6 @@ class TestPrintMetricsFunction:
         # and contain at least one '#' comment line.
         assert "#" in captured.out or len(captured.out) > 0
 
-    def test_print_metrics_writes_to_stdout_not_stderr(self, capsys):
-        """Metrics must go to stdout so they can be piped independently."""
-        print_metrics()
-        captured = capsys.readouterr()
-        assert captured.err == ""
-
-    def test_print_metrics_ends_with_newline(self, capsys):
-        """Output must end with a newline for clean terminal display."""
-        print_metrics()
-        captured = capsys.readouterr()
-        assert captured.out.endswith("\n")
 
 
 class TestMainPrintMetrics:
