@@ -32,6 +32,7 @@ from .metrics import (
     relay_status, relay_status_value,
     round_duration_seconds, update_metrics, verify_relay_status,
 )
+from .cli_summary import render as render_summary
 from .output import print_metrics, start_exporter_server, write_textfile
 from .prober import ProbeResult, RelayPool, run_probe
 
@@ -490,6 +491,7 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
 
     completed = 0
     failed = 0
+    round_results: list[ProbeResult] = []
     reopen_count = {}  # relay -> number of reopens this round
     _reopen_limit = 3
     for future in as_completed(all_futures):
@@ -505,6 +507,7 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
             except Exception as exc:
                 log.exception("worker_crash")
                 result = ProbeResult(src, dst, error=str(exc))
+            round_results.append(result)
             update_metrics(result)
             if completed % 50 == 0:
                 gc.collect()
@@ -556,7 +559,7 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
                 success_rate_pct=round(success_rate, 1),
                 avg_ms_per_pair=avg_ms_per_pair,
                 elapsed_s=round(elapsed, 1))
-    return elapsed
+    return elapsed, round_results
 
 
 def main(argv=None):
@@ -740,14 +743,21 @@ def main(argv=None):
                 last_alive_check = time.monotonic()
                 log.info("continuing with %d/%d relays online, next check in %ds", len(relays), len(all_relays), interval)
 
-            elapsed = run_round(relays, args, executors, worker_pools,
-                                shutdown_event,
-                                textfile=args.textfile, exclude=exclude)
+            elapsed, round_results = run_round(
+                relays, args, executors, worker_pools,
+                shutdown_event,
+                textfile=args.textfile, exclude=exclude,
+            )
 
             if args.textfile:
                 write_textfile(args.textfile)
 
             if args.once or stop_after_round.is_set():
+                alive_set = set(relays)
+                dead_relays = [r for r in all_relays if r not in alive_set]
+                render_summary(
+                    round_results, relays, dead_relays, elapsed_s=elapsed
+                )
                 if args.print_metrics:
                     print_metrics()
                 break

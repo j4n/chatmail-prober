@@ -121,7 +121,7 @@ class _RpcReadyFilter(logging.Filter):
 
 def configure_logging(
     tty: bool | None = None,
-    level: int = logging.INFO,
+    level: int | str = logging.INFO,
 ) -> None:
     """Configure structlog and the stdlib root logger.
 
@@ -134,6 +134,8 @@ def configure_logging(
     """
     if tty is None:
         tty = sys.stderr.isatty()
+    if isinstance(level, str):
+        level = logging.getLevelName(level.upper())
 
     # ------------------------------------------------------------------
     # Shared processors: run for every log record regardless of renderer

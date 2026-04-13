@@ -98,7 +98,8 @@ class TestMainPrintMetrics:
         with patch("chatmail_prober.__main__.print_metrics") as mock_pm, \
              patch("chatmail_prober.__main__.check_relays_alive",
                    return_value=(["nine.testrun.org"], set())), \
-             patch("chatmail_prober.__main__.run_round", return_value=0.1), \
+             patch("chatmail_prober.__main__.run_round", return_value=(0.1, [])), \
+             patch("chatmail_prober.__main__.render_summary"), \
              patch("chatmail_prober.__main__.write_textfile"), \
              patch("chatmail_prober.__main__.fetch_relay_list",
                    return_value=["nine.testrun.org"]):
