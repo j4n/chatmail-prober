@@ -649,25 +649,28 @@ chatmail-prober [relays_file ...] [options]
 | Flag | Default | Description |
 |---|---|---|
 | `relays` | (optional) | One or more relay list files; merged and deduplicated |
+| `-H, --hosts LIST` | `None` | Comma-separated relay list overriding relay file(s) |
 | `--auto-fetch PATH` | `None` | Fetch relay list from upstream URL, write to PATH, add to sources |
 | `--port` | `0` | HTTP /metrics listen port (0 = disabled) |
 | `--textfile` | `None` | Path for node_exporter textfile .prom output |
-| `--interval` | `900` | Seconds between probe rounds |
-| `--count` | `5` | Pings per pair per round |
+| `-i, --interval` | `900` | Seconds between probe rounds |
+| `-n, --count` | `5` | Pings per pair per round |
 | `--ping-interval` | `0.1` | Seconds between individual pings within a probe |
-| `--timeout` | `90` | Per-pair receive timeout in seconds |
-| `--workers` | `5` | Concurrent worker threads |
+| `-t, --timeout` | `90` | Per-pair receive timeout in seconds |
+| `-w, --workers` | `5` | Concurrent worker threads |
 | `--cache-dir` | `~/.cache/chatmail-prober` | Root for per-worker account dirs |
-| `--reset` | false | Remove all account dirs, force fresh account creation |
+| `--reset [DOMAIN...]` | `None` | Reset cached accounts; "all" resets all, DOMAIN args reset only those |
 | `--exclude PATH` | `None` | File of pairs to skip: `src->dst` per line |
-| `--once` | false | Run one round then exit (useful with --textfile in cron) |
+| `-1, --once` | false | Run one round then exit (useful with --textfile in cron) |
+| `-p, --print` | false | Print tabular summary to stdout after --once exits |
+| `-m, --print-metrics` | false | Print Prometheus metrics to stdout after --once exits |
 | `--scan` | false | Self-probe all relays in parallel, print ranked by RTT, exit |
 | `--top N` | `10` | Relays to highlight in --scan output |
 | `-v` | 0 | Debug logging (-vv debug+rpc/deltachat events) |
-| `-q` | false | Quiet: suppress progress, show only warnings/errors |
+| `-q, --quiet` | false | Quiet: suppress progress, show only warnings/errors |
 
-At least one of `relays` or `--auto-fetch` must be provided.  When both are
-given, domains from all sources are merged and deduplicated.  The default
+At least one of `relays`, `--hosts`, or `--auto-fetch` must be provided. When multiple are
+given, domains from all sources are merged and deduplicated. The default
 fetch URL is `https://chatmail.at/relays` (parses `<a class="hilite">` entries).
 
 ### Relay list format
