@@ -214,6 +214,7 @@ class AccountMaker:
                 return account, True
 
         # Find a configured-but-offline account, or create a new one.
+        found = None
         for account in self.dc.get_all_accounts():
             if account in _exclude:
                 continue
@@ -221,15 +222,16 @@ class AccountMaker:
             if addr is not None:
                 addr_domain = addr.split("@")[1] if "@" in addr else None
                 if addr_domain == domain and account not in self.online:
+                    found = account
                     break
-        else:
-            account = self.dc.add_account()
+
+        if found is None:
+            found = self.dc.add_account()
             qr_url = create_qr_url(domain)
-            account.set_config_from_qr(qr_url)
+            found.set_config_from_qr(qr_url)
 
-        self._add_online(account)
-
-        return account, False
+        self._add_online(found)
+        return found, False
 
 
 # ---------------------------------------------------------------------------
