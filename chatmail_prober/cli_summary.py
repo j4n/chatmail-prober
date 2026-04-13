@@ -26,7 +26,7 @@ _W_SENT  = 5
 _W_RECV  = 5
 _W_LOSS  = 6
 _W_RTT   = 6   # p50 / p90 / p99 / mdev
-_W_TIME  = 6   # Setup / Msg
+_W_TIME  = 10  # Setup / Msg (e.g. "12345.67ms")
 
 
 def _rtt(value: float | None) -> str:
@@ -35,8 +35,8 @@ def _rtt(value: float | None) -> str:
 
 
 def _time(value: float) -> str:
-    """Format a timing value in seconds to one decimal place."""
-    return f"{value:.1f}s"
+    """Format a timing value (seconds) as milliseconds: '123.23ms'."""
+    return f"{value * 1000:.2f}ms"
 
 
 def _loss(value: float) -> str:
