@@ -1,17 +1,7 @@
 """Structured logging configuration for chatmail-prober.
 
-Call configure_logging() once at startup (in main()) before any log calls.
-All modules then use get_logger(__name__) instead of logging.getLogger(__name__).
-
-Two rendering modes:
-  tty=True  — structlog.dev.ConsoleRenderer: colourised human-readable text
-              (used when stderr is a real terminal)
-  tty=False — structlog.processors.JSONRenderer: one JSON object per line
-              (used under systemd/journald, file redirection, or in CI)
-
-Third-party libraries (deltachat-rpc-client, prometheus_client, etc.) continue
-to use the standard library logging module.  Their records are captured by a
-stdlib handler that re-formats them consistently alongside structlog output.
+Renders colourised text on a TTY, JSON under systemd/CI.
+Third-party stdlib loggers are captured and formatted consistently.
 """
 
 import logging
@@ -59,12 +49,7 @@ def _extract_rpc_fields(
 
 
 class _DynamicStderrHandler(logging.StreamHandler):
-    """StreamHandler that resolves sys.stderr at emit-time, not at construction.
-
-    pytest swaps sys.stderr after handler creation; using a property here
-    ensures capsys can intercept output during tests without needing to
-    recreate the handler on every configure_logging() call.
-    """
+    """StreamHandler that resolves sys.stderr at emit-time (pytest-compatible)."""
 
     @property
     def stream(self) -> object:
@@ -79,13 +64,7 @@ class _DynamicStderrHandler(logging.StreamHandler):
 
 
 class _RpcReadyFilter(logging.Filter):
-    """Intercept the upstream 'RPC server ready' INFO record.
-
-    The deltachat-rpc-client emits this at INFO level with a plain-text
-    message.  We rewrite it to DEBUG and inject structured fields so that:
-      - It is invisible at the default INFO level (no noise in production).
-      - At DEBUG level it appears as event='rpc_ready' version='vX.Y.Z'.
-    """
+    """Rewrite upstream 'RPC server ready' INFO records to DEBUG with structured fields."""
 
     def __init__(self, effective_level: int = logging.INFO) -> None:
         super().__init__()
@@ -125,12 +104,8 @@ def configure_logging(
 ) -> None:
     """Configure structlog and the stdlib root logger.
 
-    Args:
-        tty:   Force renderer selection.  None (default) auto-detects via
-               sys.stderr.isatty().  True → ConsoleRenderer, False → JSON.
-        level: Minimum log level for the chatmail_prober logger and the
-               structlog pipeline.  Root logger stays at WARNING to suppress
-               noisy third-party libraries.
+    tty=None auto-detects; root logger stays at WARNING to suppress
+    third-party noise.
     """
     if tty is None:
         tty = sys.stderr.isatty()

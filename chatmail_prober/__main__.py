@@ -44,13 +44,7 @@ AUTO_FETCH_URL = "https://chatmail.at/relays"
 
 
 class _SupprRpcClosedFilter(logging.Filter):
-    """Suppress 'RPC server closed' errors during shutdown only.
-
-    During shutdown, the event loop thread may try to read from the closed RPC
-    server and raise an error. This is expected and not actionable, so we filter
-    it out. During normal operation these errors indicate real RPC crashes and
-    should be visible for diagnostics.
-    """
+    """Suppress expected 'RPC server closed' errors during shutdown."""
     def __init__(self, shutdown_event):
         super().__init__()
         self._shutdown_event = shutdown_event
@@ -275,12 +269,8 @@ def parse_args(argv=None):
 def reset_accounts(cache_dir: Path, domains: list[str]) -> None:
     """Remove cached account directories.
 
-    Args:
-        cache_dir: base cache directory (e.g. ~/.cache/chatmail-prober)
-        domains:   ["all"]          -> full reset: wipe all worker-* dirs,
-                                       keep alive-check
-                   ["d1", "d2", ...]-> selective reset: wipe those domains
-                                       from every worker-* dir and alive-check/
+    domains=["all"] wipes all worker-* dirs; specific domains are removed
+    from every worker-* dir and alive-check/.
     """
     if domains == ["all"]:
         # Full reset: remove every worker-* subdirectory.
@@ -342,15 +332,10 @@ def scan_relays(relays, args):
 
 
 def _kill_stale_rpc_servers(cache_dir, graceful=True):
-    """Kill orphaned deltachat-rpc-server processes from a previous crash.
+    """Kill orphaned deltachat-rpc-server processes matching our cache_dir.
 
-    Only targets processes whose command line contains our cache_dir path,
-    so unrelated deltachat instances are not affected.
-
-    When graceful=True (default, used at startup), sends SIGTERM first and
-    waits briefly for a clean shutdown before escalating to SIGKILL.  This
-    lets sqlite close its WAL cleanly.  When graceful=False (used during
-    signal-handler shutdown where speed matters), goes straight to SIGKILL.
+    graceful=True sends SIGTERM first (lets sqlite close WAL cleanly);
+    graceful=False goes straight to SIGKILL (used during signal-handler shutdown).
     """
     cache_str = str(cache_dir)
     try:
@@ -380,21 +365,11 @@ def _kill_stale_rpc_servers(cache_dir, graceful=True):
 
 
 def check_relays_alive(relays, args, previously_dead=None, unreachable_relays=None):
-    """Run a single self-probe (relay->itself, count=1) for each relay in parallel.
+    """Self-probe each relay in parallel; return (alive_list, dead_dict).
 
-    Returns (alive, dead) where alive is the list of relays that succeeded
-    (in original order) and dead is a dict {relay: error} of relays that failed.
-    Dead relays are logged as warnings and excluded from the matrix.
-
-    Relays that fail with transient errors (timeout, unknown) are retried
-    up to 2 times -- unless they were already in previously_dead, meaning
-    they failed last round too and retrying within the same window is
-    unlikely to help.
-
-    unreachable_relays is an optional list of known-dead/unreachable relays
-    that are alive-checked but NOT included in the returned alive list unless
-    they recover.  Recovered unreachable relays are logged as
-    relay_recovered_from_unreachable and appended to the alive list.
+    Transient failures (timeout, unknown) are retried up to 2 times unless
+    the relay was already dead last round.  Relays from unreachable_relays
+    are checked but excluded from the alive list unless they recover.
     """
     if previously_dead is None:
         previously_dead = set()
@@ -529,16 +504,7 @@ def check_relays_alive(relays, args, previously_dead=None, unreachable_relays=No
 
 def run_round(relays, args, executors, worker_pools, shutdown_event,
               textfile=None, exclude=None):
-    """Run one complete probe round across all relay pairs.
-
-    Each worker has its own RelayPool with isolated account directories.
-    Accounts persist across probes within a worker and across rounds, so
-    only the first probe per relay per worker pays account-creation cost.
-
-    If shutdown_event is set during the round, the loop breaks immediately
-    without recording metrics for in-flight probes (which would show spurious
-    errors from killed rpc-server processes).
-    """
+    """Run one complete probe round across all relay pairs."""
     clear_stale_labels(relays)
     pairs = [(s, d) for s in relays for d in relays
              if not exclude or (s, d) not in exclude]
@@ -549,7 +515,6 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
     for pool in worker_pools:
         pool.open_all(relays)
 
-    # Partition pairs round-robin: pair i goes to worker i % workers
     worker_pairs = [[] for _ in range(args.workers)]
     for i, pair in enumerate(pairs):
         worker_pairs[i % args.workers].append(pair)
@@ -602,8 +567,6 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
                     "probe_failed",
                     n=completed, total=len(pairs), error=result.error,
                 )
-                # Reopen contexts for relays involved in RPC-level failures
-                # so subsequent probes can recover.
                 _rpc_keywords = ("BrokenPipe", "ConnectionReset",
                                  "EOFError", "process",
                                  "rpc server closed", "rpc process")

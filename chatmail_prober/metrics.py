@@ -163,17 +163,10 @@ def relay_status_value(error_str: str | None) -> int:
 
 
 def verify_relay_status(relay: str | None, error_str: str | None) -> int:
-    """Get relay status value with DNS cross-check.
+    """Get relay status value, cross-checking DNS errors against real resolution.
 
-    Wraps relay_status_value() and corrects false DNS errors from the
-    Delta Chat RPC.  When the RPC reports a DNS failure, the actual cause
-    may be a missing imap.* subdomain because autoconfig was broken --
-    the relay host itself still resolves.  In that case the relay is
-    unreachable (timeout) rather than having a DNS problem.
-
-    Args:
-        relay: relay domain name (e.g. "chat.beeep.ir")
-        error_str: error string from the probe, or None if ok
+    When the RPC reports DNS failure but the base domain resolves, the
+    error is reclassified as timeout (broken autoconfig, not missing DNS).
     """
     value = relay_status_value(error_str)
     if value != -6 or relay is None:

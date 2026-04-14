@@ -69,38 +69,17 @@ def render(
     elapsed_s: float,
     out: IO[str] | None = None,
 ) -> None:
-    """Render a compact table summary to *out*.
-
-    Parameters
-    ----------
-    results:
-        All ``ProbeResult`` objects from the completed round.
-    alive_relays:
-        Relay hostnames confirmed reachable during the alive check.
-    dead_relays:
-        Mapping of relay hostname → raw error string (or ``None``) for
-        every relay that failed the alive check.
-    elapsed_s:
-        Total wall-clock time for the round in seconds.
-    out:
-        File-like object to write to.  Defaults to ``sys.stdout``.
-    """
+    """Render a compact table summary to *out* (default: stdout)."""
     if out is None:
         out = sys.stdout
 
     ok_results     = [r for r in results if r.error is None]
     failed_results = [r for r in results if r.error is not None]
 
-    # ------------------------------------------------------------------
-    # Compute route column width so all rows line up.
-    # ------------------------------------------------------------------
     route_strs = [f"{r.source} -> {r.destination}" for r in results]
     route_w = max((len(s) for s in route_strs), default=5)
     route_w = max(route_w, len("Route"))
 
-    # ------------------------------------------------------------------
-    # Header
-    # ------------------------------------------------------------------
     header = (
         f"{'Route':<{route_w}}"
         f"  {'Sent':>{_W_SENT}}"
@@ -116,12 +95,8 @@ def render(
     separator = "-" * len(header)
     out.write(f"\n{header}\n{separator}\n")
 
-    # ------------------------------------------------------------------
-    # Rows
-    # ------------------------------------------------------------------
     for route, r in zip(route_strs, results):
         if r.error is None:
-            # Successful probe — show full stats.
             row = (
                 f"{route:<{route_w}}"
                 f"  {r.sent:>{_W_SENT}}"
@@ -135,7 +110,6 @@ def render(
                 f"  {_time(r.message_time):>{_W_TIME}}"
             )
         else:
-            # Failed probe — show category in the p50 column, dashes elsewhere.
             category = r.failure_category or "unknown"
             row = (
                 f"{route:<{route_w}}"
@@ -151,9 +125,6 @@ def render(
             )
         out.write(f"{row}\n")
 
-    # ------------------------------------------------------------------
-    # Probe-level failure block (grouped by category, below the table)
-    # ------------------------------------------------------------------
     out.write("\n")
     if failed_results:
         by_category: dict[str, list[ProbeResult]] = defaultdict(list)
@@ -165,9 +136,6 @@ def render(
             out.write(f"  {category}: {pairs}\n")
         out.write("\n")
 
-    # ------------------------------------------------------------------
-    # Dead-relay table (alive-check failures)
-    # ------------------------------------------------------------------
     if dead_relays:
         # Compute column widths dynamically.
         host_w = max(len(h) for h in dead_relays)
@@ -190,9 +158,6 @@ def render(
             out.write(f"{host:<{host_w}}  {category:<{_W_ERR_CAT}}  {message}\n")
         out.write("\n")
 
-    # ------------------------------------------------------------------
-    # Summary footer
-    # ------------------------------------------------------------------
     total_relays = len(alive_relays) + len(dead_relays)
     alive_n      = len(alive_relays)
     total_probes = len(results)
