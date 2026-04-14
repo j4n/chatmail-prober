@@ -19,3 +19,7 @@ The cross-relay matrix view uses the
 Grafana plugin for the N×N relay heatmap.
 
 Install it from the link above before importing `dashboard-inter.json`.
+
+## Visualizing Dash Changes
+
+You can try https://github.com/j4n/dashdiff for a git diff driver.

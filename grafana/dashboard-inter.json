@@ -459,7 +459,7 @@
           "fields": "",
           "values": false
         },
-        "showPercentChange": false,
+        "showPercentChange": true,
         "textMode": "auto",
         "wideLayout": true
       },
@@ -518,8 +518,8 @@
       },
       "id": 31,
       "options": {
-        "colorMode": "value",
-        "graphMode": "area",
+        "colorMode": "none",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
@@ -529,7 +529,7 @@
           "fields": "",
           "values": false
         },
-        "showPercentChange": false,
+        "showPercentChange": true,
         "textMode": "auto",
         "wideLayout": true
       },
@@ -2220,6 +2220,6 @@
   "timezone": "browser",
   "title": "Relay Network: Interoperability Cross-relay",
   "uid": "chatmail-inter",
-  "version": 16,
+  "version": 31,
   "weekStart": ""
 }
