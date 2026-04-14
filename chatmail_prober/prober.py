@@ -50,13 +50,8 @@ class PingError(Exception):
     """Raised when a probe encounters a non-recoverable error."""
 
 
-def _is_fatal_error(msg: str) -> bool:
-    """Check if an RPC ERROR event indicates a non-recoverable failure.
-
-    Delegates to _classify_error() so that all error classification uses
-    a single set of patterns.
-    """
-    return _classify_error(msg) in ("dns", "tls", "auth", "connection_refused")
+# Error categories that won't resolve by waiting longer -- fail fast.
+_FATAL_CATEGORIES = frozenset({"dns", "tls", "auth", "connection_refused"})
 
 
 def is_ip_address(host: str) -> bool:
@@ -166,7 +161,7 @@ class AccountMaker:
                 return
             elif event.kind == EventType.ERROR:
                 log.warning("ERROR during profile setup: %s", event.msg)
-                if _is_fatal_error(event.msg):
+                if _classify_error(event.msg) in _FATAL_CATEGORIES:
                     raise PingError(event.msg)
 
     def _add_online(self, account):
