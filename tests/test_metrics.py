@@ -243,68 +243,6 @@ class TestRelayStatusMetric:
         assert metrics_mod.relay_status_value("unknown error") == 0
 
 
-class TestClassifyAliveCheckError:
-    def test_none_returns_ok(self):
-        assert metrics_mod.classify_alive_check_error(None) == "ok"
-
-    def test_timeout_variants(self):
-        assert metrics_mod.classify_alive_check_error("Timeout waiting for foo") == "timeout"
-        assert metrics_mod.classify_alive_check_error("Connection timed out") == "timeout"
-        assert metrics_mod.classify_alive_check_error("exceeded global deadline") == "timeout"
-        assert metrics_mod.classify_alive_check_error("timeout") == "timeout"
-
-    def test_connection_refused(self):
-        assert metrics_mod.classify_alive_check_error("Connection refused") == "connection_refused"
-        assert metrics_mod.classify_alive_check_error(
-            "ConnectionRefusedError: [Errno 111]") == "connection_refused"
-
-    def test_dns(self):
-        assert metrics_mod.classify_alive_check_error(
-            "Name or service not known") == "dns"
-        assert metrics_mod.classify_alive_check_error(
-            "getaddrinfo failed") == "dns"
-        assert metrics_mod.classify_alive_check_error(
-            "Could not find DNS resolutions for imap.foo:993") == "dns"
-        assert metrics_mod.classify_alive_check_error(
-            "dial tcp: lookup relay.example: no such host") == "dns"
-        assert metrics_mod.classify_alive_check_error(
-            "NXDOMAIN error for imap.example") == "dns"
-
-    def test_dns_in_tls_connection_string(self):
-        # Real-world: DNS error inside a TLS connection URI -- dns must win
-        assert metrics_mod.classify_alive_check_error(
-            'IMAP failed to connect to imap.chat.sus.fr:993:tls: '
-            'Could not find DNS resolutions for imap.chat.sus.fr:993.'
-        ) == "dns"
-
-    def test_tls(self):
-        assert metrics_mod.classify_alive_check_error("SSL: CERTIFICATE_VERIFY_FAILED") == "tls"
-        assert metrics_mod.classify_alive_check_error("certificate has expired") == "tls"
-
-    def test_auth(self):
-        assert metrics_mod.classify_alive_check_error(
-            "AUTHENTICATIONFAILED") == "auth"
-        assert metrics_mod.classify_alive_check_error(
-            "authentication failed") == "auth"
-
-    def test_auth_inside_setup_message(self):
-        # Real foobar.org error: auth failure wrapped in setup error
-        assert metrics_mod.classify_alive_check_error(
-            'Failed to setup sender profile on foobar.org: JsonRpcError: '
-            "{'code': -1, 'message': 'Error:\\n\\n\"Cannot login as "
-            '"gbegx86r9@foobar.org". Please check if the email address '
-            "and the password are correct. (no response: code: None, "
-            'info: Some("[AUTHENTICATIONFAILED] Authentication failed."))"\'}'
-        ) == "auth"
-
-    def test_setup(self):
-        assert metrics_mod.classify_alive_check_error(
-            "Failed to setup sender profile on foo: RPC process crashed") == "setup"
-
-    def test_unknown_fallback(self):
-        assert metrics_mod.classify_alive_check_error("something unexpected") == "unknown"
-
-
 class TestVerifyRelayStatus:
     @patch("chatmail_prober.metrics.socket.getaddrinfo")
     def test_dns_error_reclassified_when_base_resolves(self, mock_gai):

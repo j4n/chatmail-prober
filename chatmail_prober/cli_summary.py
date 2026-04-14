@@ -22,7 +22,7 @@ import sys
 from collections import defaultdict
 from typing import IO, Mapping, Sequence
 
-from chatmail_prober.prober import ProbeResult
+from chatmail_prober.prober import ProbeResult, _classify_error
 
 # Column widths (characters).  Route column is computed dynamically.
 _W_SENT  = 5
@@ -52,20 +52,7 @@ def _loss(value: float) -> str:
 
 def _error_category(error: str | None) -> str:
     """Extract a short category label from a raw error string."""
-    if error is None:
-        return "unknown"
-    e = error.lower()
-    if "authenticationfailed" in e or "auth" in e:
-        return "auth"
-    if "timeout" in e or "deadline" in e or "timed out" in e:
-        return "timeout"
-    if "name or service not known" in e or "dns" in e or "getaddrinfo" in e:
-        return "dns"
-    if "certificate" in e or "tls" in e or "ssl" in e:
-        return "tls"
-    if "connection refused" in e:
-        return "refused"
-    return "unknown"
+    return _classify_error(error) or "unknown"
 
 
 def _truncate(s: str, width: int) -> str:

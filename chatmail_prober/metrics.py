@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .prober import ProbeResult
 
+from .prober import _classify_error
+
 from prometheus_client import (
     CollectorRegistry, Counter, Gauge, REGISTRY,
     disable_created_metrics,
@@ -138,37 +140,26 @@ def clear_stale_labels(active_relays: list[str]) -> None:
                 metric.remove(*label_values)
 
 
+_CATEGORY_TO_STATUS: dict[str | None, int] = {
+    None: 1,
+    "timeout": -1,
+    "connection_refused": -5,
+    "dns": -6,
+    "tls": -4,
+    "auth": -3,
+    "setup": -2,
+    "unknown": 0,
+}
+
+
 def relay_status_value(error_str: str | None) -> int:
     """Map alive-check error string to cmping_relay_status integer.
 
-    Return values:
-        1  = ok (no error)
-        0  = unknown error
-       -1  = timeout / deadline exceeded
-       -2  = setup failure (account creation)
-       -3  = auth failure
-       -4  = TLS / certificate error
-       -5  = connection refused
-       -6  = DNS resolution failure
+    Delegates to _classify_error() so all pattern matching lives in one place.
+    Return values: 1=ok, 0=unknown, -1=timeout, -2=setup, -3=auth,
+    -4=tls, -5=connection_refused, -6=dns.
     """
-    if error_str is None:
-        return 1
-    lower = error_str.lower()
-    if "timeout" in lower or "timed out" in lower or "deadline" in lower:
-        return -1
-    if "connection refused" in lower or "connectionrefusederror" in lower:
-        return -5
-    if ("name or service not known" in lower or "getaddrinfo" in lower
-            or "dns resolution" in lower or "no such host" in lower
-            or "nxdomain" in lower):
-        return -6
-    if "ssl" in lower or "certificate" in lower:
-        return -4
-    if "auth" in lower or "authentication" in lower:
-        return -3
-    if "failed to setup" in lower:
-        return -2
-    return 0
+    return _CATEGORY_TO_STATUS.get(_classify_error(error_str), 0)
 
 
 def verify_relay_status(relay: str | None, error_str: str | None) -> int:
@@ -226,18 +217,6 @@ def is_transient_alive_error(relay: str | None, error_str: str | None) -> bool:
     # -1 (timeout) and 0 (unknown) are potentially transient
     return status in (-1, 0)
 
-
-def classify_alive_check_error(error_str: str | None) -> str:
-    """Deprecated: use relay_status_value() instead. Map error to string reason.
-
-    Kept for backwards compatibility with dashboard metric queries that expect string reasons.
-    """
-    value = relay_status_value(error_str)
-    mapping = {
-        1: "ok", 0: "unknown", -1: "timeout", -2: "setup",
-        -3: "auth", -4: "tls", -5: "connection_refused", -6: "dns"
-    }
-    return mapping.get(value, "unknown")
 
 
 def clear_stale_relay_labels(configured_relays: list[str]) -> None:

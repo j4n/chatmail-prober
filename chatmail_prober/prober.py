@@ -51,28 +51,12 @@ class PingError(Exception):
 
 
 def _is_fatal_error(msg: str) -> bool:
-    """Check if an RPC ERROR event message indicates a non-recoverable failure.
+    """Check if an RPC ERROR event indicates a non-recoverable failure.
 
-    These errors will not resolve by waiting longer (DNS missing, port
-    filtered, auth rejected, bad cert), so wait_account_online() should
-    raise immediately instead of burning the full timeout.
+    Delegates to _classify_error() so that all error classification uses
+    a single set of patterns.
     """
-    lower = msg.lower()
-    # DNS resolution failure
-    if ("name or service not known" in lower or "getaddrinfo" in lower
-            or "dns resolution" in lower or "no such host" in lower
-            or "nxdomain" in lower):
-        return True
-    # Connection refused
-    if "connection refused" in lower or "connectionrefusederror" in lower:
-        return True
-    # TLS / certificate
-    if "certificate" in lower:
-        return True
-    # Auth failure
-    if "authenticationfailed" in lower:
-        return True
-    return False
+    return _classify_error(msg) in ("dns", "tls", "auth", "connection_refused")
 
 
 def is_ip_address(host: str) -> bool:
@@ -85,11 +69,7 @@ def is_ip_address(host: str) -> bool:
 
 
 def generate_credentials() -> tuple[str, str]:
-    """Generate random username and password for IP-based login.
-
-    Returns:
-        tuple: (username, password) where username is 12 chars and password is 20 chars
-    """
+    """Generate random username and password for IP-based login."""
     chars = string.ascii_lowercase + string.digits
     username = "".join(random.choices(chars, k=12))
     password = "".join(random.choices(chars, k=20))
@@ -189,14 +169,6 @@ class AccountMaker:
                 if _is_fatal_error(event.msg):
                     raise PingError(event.msg)
 
-    def wait_all_online(self, timeout=None):
-        """Wait for all accounts in self.online to come online.
-
-        Convenience wrapper for standalone run_probe path.
-        """
-        for account in self.online:
-            self.wait_account_online(account, timeout=timeout)
-
     def _add_online(self, account):
         account.set_config("bot", "1")
         account.start_io()
@@ -204,11 +176,6 @@ class AccountMaker:
 
     def get_relay_account(self, domain, exclude=None):
         """Get or create an account for domain.
-
-        Args:
-            domain: relay domain to get an account for
-            exclude: optional set of accounts to skip (e.g. the sender
-                     account when fetching the receiver for a self-loop)
 
         Returns (account, was_online) -- was_online=True means the account
         was already running and does not need wait_account_online().
@@ -255,11 +222,7 @@ class AccountMaker:
 # ---------------------------------------------------------------------------
 
 class Pinger:
-    """Sends ping messages via 1:1 chat and receives responses.
-
-    Simplified from cmping's group-mode Pinger: exactly one receiver,
-    creates its own 1:1 chat, no thread pool for receivers.
-    """
+    """Sends ping messages via 1:1 chat and collects RTTs."""
 
     def __init__(self, sender, receiver, count, interval):
         self.sender = sender
@@ -272,7 +235,6 @@ class Pinger:
         self.relay1 = self.addr1.split("@")[1]
         self.relay2 = self.addr2.split("@")[1]
 
-        # Create 1:1 chat
         contact = sender.create_contact(receiver)
         self.chat = contact.create_chat()
 
@@ -298,7 +260,7 @@ class Pinger:
         return 0.0 if expected == 0 else (1 - self.received / expected) * 100
 
     def send_pings(self):
-        """Send ping messages to the 1:1 chat at regular intervals."""
+        """Send pings at regular intervals (runs in a daemon thread)."""
         try:
             for seq in range(self.count):
                 if self.deadline is not None and time.time() >= self.deadline:
@@ -313,19 +275,10 @@ class Pinger:
             self._stop_event.set()
 
     def receive(self) -> Generator[tuple[int, float], None, None]:
-        """Receive ping messages from the single receiver.
-
-        Yields:
-            tuple: (seq, ms_duration) for each received message
-
-        The generator sets _stop_event on early exit so that send_pings
-        terminates promptly even when the caller breaks out of the loop.
-        """
+        """Receive ping responses, yielding (seq, ms_duration) pairs."""
         num_pending = self.count
         received_seqs: set[int] = set()
 
-        # Poll receiver's event queue directly -- no thread pool needed
-        # for a single receiver.
         account_queue = self.receiver._rpc.get_queue(self.receiver.id)
         try:
             while num_pending > 0:
@@ -364,19 +317,7 @@ class Pinger:
 # ---------------------------------------------------------------------------
 
 def _perform_direct_ping(relay_contexts, source, dest, count, interval, timeout):
-    """Run a direct 1:1 ping between two relays using shared contexts.
-
-    Args:
-        relay_contexts: dict mapping relay name -> open RelayContext
-        source: source relay domain
-        dest: destination relay domain
-        count: number of pings to send
-        interval: seconds between pings
-        timeout: per-phase timeout in seconds
-
-    Returns:
-        Pinger with results populated.
-    """
+    """Run a direct 1:1 ping between two relays using shared contexts."""
     sender_ctx = relay_contexts[source]
     receiver_ctx = relay_contexts[dest]
     if sender_ctx.maker is None:
@@ -453,12 +394,7 @@ def _perform_direct_ping(relay_contexts, source, dest, count, interval, timeout)
 # ---------------------------------------------------------------------------
 
 class RelayPool:
-    """Manages one RelayContext per relay domain within a single worker.
-
-    Each worker gets its own RelayPool with an isolated accounts directory.
-    Accounts persist across probes within the same worker and across rounds,
-    so only the first probe per relay pays the account-creation cost.
-    """
+    """Manages one RelayContext per relay domain within a single worker."""
 
     def __init__(self, cache_dir):
         self._cache_dir = Path(cache_dir)
