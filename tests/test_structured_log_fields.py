@@ -6,6 +6,7 @@ rather than embedding values inside the event string.
 
 import json
 import logging
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -97,7 +98,7 @@ class TestAliveCheckStartLog:
         args.timeout = 30
         args.cache_dir = str(tmp_path)
 
-        check_relays_alive(["relay.a", "relay.b"], args)
+        check_relays_alive(["relay.a", "relay.b"], args, Path(args.cache_dir))
 
         logs = _json_logs(capsys)
         start_logs = [l for l in logs if l.get("event") == "alive_check_start"]
@@ -143,7 +144,7 @@ class TestSetupProfileLog:
         args.timeout = 30
         args.cache_dir = str(tmp_path)
 
-        check_relays_alive(["broken.relay"], args)
+        check_relays_alive(["broken.relay"], args, Path(args.cache_dir))
 
         logs = _json_logs(capsys)
         # The first failure emits event='relay_dead'; retries emit 'relay_retry_dead'

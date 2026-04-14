@@ -3,6 +3,7 @@
 import argparse
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from concurrent.futures import ThreadPoolExecutor
@@ -281,7 +282,7 @@ class TestCheckRelaysAlive:
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _selective_probe)
         relays = ["a.example", "dead.example", "b.example"]
         args = _make_args(tmp_path, workers=3)
-        alive, dead_set = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
 
         assert alive == ["a.example", "b.example"]
         assert "dead.example" not in alive
@@ -291,7 +292,7 @@ class TestCheckRelaysAlive:
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
         relays = ["a.example", "b.example", "c.example"]
         args = _make_args(tmp_path, workers=3)
-        alive, dead_set = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
 
         assert alive == relays
         assert dead_set == {}
@@ -315,7 +316,7 @@ class TestCheckRelaysAlive:
                             lambda r, e: e is not None and "timeout" in e.lower())
         relays = ["a.example", "flaky.example", "b.example"]
         args = _make_args(tmp_path, workers=3)
-        alive, dead_set = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
 
         assert "flaky.example" in alive
         assert "flaky.example" not in dead_set
@@ -341,7 +342,7 @@ class TestCheckRelaysAlive:
                             lambda r, e: False)
         relays = ["a.example", "auth.example", "refused.example"]
         args = _make_args(tmp_path, workers=3)
-        alive, dead_set = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
 
         assert "auth.example" not in alive
         assert "refused.example" not in alive
@@ -367,7 +368,7 @@ class TestCheckRelaysAlive:
                             lambda r, e: e is not None and "timeout" in e.lower())
         relays = ["a.example", "slow.example"]
         args = _make_args(tmp_path, workers=3)
-        alive, dead_set = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
 
         assert "slow.example" not in alive
         assert "slow.example" in dead_set
@@ -378,7 +379,7 @@ class TestCheckRelaysAlive:
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
         relays = ["a.example", "b.example"]
         args = _make_args(tmp_path, workers=3)
-        alive, dead_set = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
 
         assert alive == relays
         assert dead_set == {}
@@ -402,7 +403,7 @@ class TestCheckRelaysAlive:
         relays = ["a.example", "known.dead"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(
-            relays, args, previously_dead={"known.dead": "timeout"})
+            relays, args, Path(args.cache_dir), previously_dead={"known.dead": "timeout"})
 
         assert "known.dead" not in alive
         assert "known.dead" in dead_set  # dict membership check works on keys
@@ -414,7 +415,7 @@ class TestCheckRelaysAlive:
         relays = ["a.example", "recovered.example"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(
-            relays, args, previously_dead={"recovered.example": "timeout"})
+            relays, args, Path(args.cache_dir), previously_dead={"recovered.example": "timeout"})
 
         assert "recovered.example" in alive
         assert dead_set == {}

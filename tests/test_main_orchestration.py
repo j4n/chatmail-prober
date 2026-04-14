@@ -11,6 +11,7 @@ All tests use monkeypatched run_probe; no live network or RPC binary needed.
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -86,7 +87,7 @@ class TestAliveCheckMetrics:
 
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _probe)
         args = _make_args(tmp_path, workers=2)
-        alive, dead_set = check_relays_alive(["host.abc", "host.good"], args)
+        alive, dead_set = check_relays_alive(["host.abc", "host.good"], args, Path(args.cache_dir))
 
         assert "host.abc" not in alive
         assert "host.abc" in dead_set
@@ -108,7 +109,7 @@ class TestAliveCheckMetrics:
 
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _probe)
         args = _make_args(tmp_path, workers=2)
-        alive, dead_set = check_relays_alive(["hostb.xyz", "host.good"], args)
+        alive, dead_set = check_relays_alive(["hostb.xyz", "host.good"], args, Path(args.cache_dir))
 
         assert "hostb.xyz" not in alive
         assert metrics_mod.relay_status.labels(relay="hostb.xyz")._value.get() == -3.0
@@ -128,7 +129,7 @@ class TestAliveCheckMetrics:
 
         monkeypatch.setattr("chatmail_prober.__main__.run_probe", _probe)
         args = _make_args(tmp_path, workers=2)
-        alive, dead_set = check_relays_alive(["hostd.xyz", "host.good"], args)
+        alive, dead_set = check_relays_alive(["hostd.xyz", "host.good"], args, Path(args.cache_dir))
 
         assert "hostd.xyz" not in alive
         assert metrics_mod.relay_status.labels(relay="hostd.xyz")._value.get() == -1.0
@@ -137,7 +138,7 @@ class TestAliveCheckMetrics:
         monkeypatch.setattr("chatmail_prober.__main__.run_probe",
                             lambda *a, **kw: _ok(a[0], a[1]))
         args = _make_args(tmp_path, workers=1)
-        alive, dead_set = check_relays_alive(["host.good"], args)
+        alive, dead_set = check_relays_alive(["host.good"], args, Path(args.cache_dir))
 
         assert alive == ["host.good"]
         assert dead_set == {}

@@ -42,6 +42,13 @@ _app_log = get_logger("chatmail_prober")
 
 AUTO_FETCH_URL = "https://chatmail.at/relays"
 
+# Pre-lowercased keywords indicating an RPC transport failure (not an
+# application-level error).  Used to decide when to reopen a RelayContext.
+_RPC_CRASH_KEYWORDS = (
+    "brokenpipe", "connectionreset", "eoferror", "process",
+    "rpc server closed", "rpc process",
+)
+
 
 class _SupprRpcClosedFilter(logging.Filter):
     """Suppress expected 'RPC server closed' errors during shutdown."""
@@ -293,10 +300,9 @@ def reset_accounts(cache_dir: Path, domains: list[str]) -> None:
                     log.info("Reset: removed %s", target)
 
 
-def scan_relays(relays, args):
+def scan_relays(relays, args, cache_dir):
     """Self-probe all relays in parallel, print ranked by avg RTT, then exit."""
     log.info("Scanning %d relays...", len(relays))
-    cache_dir = Path(args.cache_dir).expanduser()
 
     results = {}
     with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
@@ -364,7 +370,8 @@ def _kill_stale_rpc_servers(cache_dir, graceful=True):
         pass
 
 
-def check_relays_alive(relays, args, previously_dead=None, unreachable_relays=None):
+def check_relays_alive(relays, args, cache_dir, previously_dead=None,
+                       unreachable_relays=None):
     """Self-probe each relay in parallel; return (alive_list, dead_dict).
 
     Transient failures (timeout, unknown) are retried up to 2 times unless
@@ -374,7 +381,6 @@ def check_relays_alive(relays, args, previously_dead=None, unreachable_relays=No
     if previously_dead is None:
         previously_dead = set()
     unreachable_set: set[str] = set(unreachable_relays or [])
-    cache_dir = Path(args.cache_dir).expanduser()
     # Include unreachable relays in the alive check so we can detect recovery.
     all_check_relays = list(relays) + [r for r in unreachable_set if r not in relays]
     with ThreadPoolExecutor(max_workers=min(len(all_check_relays), args.workers)) as pool:
@@ -405,11 +411,12 @@ def check_relays_alive(relays, args, previously_dead=None, unreachable_relays=No
                     else:
                         log.info("relay_ok",
                                  rtt_ms=round(result.rtts_ms[0]) if result.rtts_ms else 0)
-                remaining = [r for r in relays if r not in completed and r not in dead]
-                if remaining:
-                    log.info("alive_check_progress",
-                             remaining=len(remaining),
-                             pending=remaining[:5])
+                if len(completed) % 10 == 0 or len(completed) == len(all_check_relays):
+                    remaining = [r for r in all_check_relays if r not in completed and r not in dead]
+                    if remaining:
+                        log.info("alive_check_progress",
+                                 remaining=len(remaining),
+                                 pending=remaining[:5])
         except FuturesTimeoutError:
             elapsed = time.monotonic() - check_start
             for future, relay in futures.items():
@@ -427,11 +434,23 @@ def check_relays_alive(relays, args, previously_dead=None, unreachable_relays=No
     # between rounds, retrying within the same window won't help.
     max_retries = 2
     retry_delay = 5
+    # Cache DNS-based verify_relay_status results to avoid redundant lookups.
+    _status_cache: dict[tuple[str, str | None], int] = {}
+
+    def _cached_status(relay, error_str):
+        key = (relay, error_str)
+        if key not in _status_cache:
+            _status_cache[key] = verify_relay_status(relay, error_str)
+        return _status_cache[key]
+
+    def _is_transient(relay, error_str):
+        return _cached_status(relay, error_str) in (-1, 0)
+
     retryable = {r: err for r, err in dead.items()
                  if r not in previously_dead
-                 and is_transient_alive_error(r, err)}
+                 and _is_transient(r, err)}
     skipped = {r for r in dead if r in previously_dead
-               and is_transient_alive_error(r, dead[r])}
+               and _is_transient(r, dead[r])}
     if skipped:
         log.info("Skipping retries for %d previously-dead relay(s): %s",
                  len(skipped), ", ".join(skipped))
@@ -472,9 +491,9 @@ def check_relays_alive(relays, args, previously_dead=None, unreachable_relays=No
                         with structlog.contextvars.bound_contextvars(relay=relay):
                             log.warning("relay_retry_timeout",
                                         attempt=attempt, max_retries=max_retries)
-        # Re-evaluate retryable with updated errors
+        # Re-evaluate retryable with updated errors (new error string -> new cache entry)
         retryable = {r: dead[r] for r in retryable
-                     if r in dead and is_transient_alive_error(r, dead[r])}
+                     if r in dead and _is_transient(r, dead[r])}
 
     # Build alive list: normal relays that passed + unreachable relays that recovered.
     alive = [r for r in relays if r not in dead]
@@ -494,7 +513,7 @@ def check_relays_alive(relays, args, previously_dead=None, unreachable_relays=No
     all_known = list(relays) + list(unreachable_set)
     clear_stale_relay_labels(all_known)
     for r in all_known:
-        relay_status.labels(relay=r).set(verify_relay_status(r, dead.get(r)))
+        relay_status.labels(relay=r).set(_cached_status(r, dead.get(r)))
     elapsed = time.monotonic() - check_start
     log.warning("alive_check_complete",
                 elapsed_s=round(elapsed, 1),
@@ -567,10 +586,7 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
                     "probe_failed",
                     n=completed, total=len(pairs), error=result.error,
                 )
-                _rpc_keywords = ("BrokenPipe", "ConnectionReset",
-                                 "EOFError", "process",
-                                 "rpc server closed", "rpc process")
-                if any(kw.lower() in result.error.lower() for kw in _rpc_keywords):
+                if any(kw in result.error.lower() for kw in _RPC_CRASH_KEYWORDS):
                     pool = worker_pools[worker_id]
                     for relay in (src, dst):
                         prior = reopen_count.get(relay, 0)
@@ -677,7 +693,7 @@ def main(argv=None):
         exclude = read_exclude_list(args.exclude)
 
     if args.scan:
-        scan_relays(relays, args)
+        scan_relays(relays, args, cache_dir)
         return
 
     total_pairs = len(relays) ** 2 - len(exclude)
@@ -712,7 +728,7 @@ def main(argv=None):
         log.info("Shutting down, killing running probes...")
         for ex in executors:
             ex.shutdown(wait=False, cancel_futures=True)
-        _kill_stale_rpc_servers(Path(args.cache_dir).expanduser(), graceful=False)
+        _kill_stale_rpc_servers(cache_dir, graceful=False)
         # Main thread may be stuck in as_completed(); force exit after 5s.
         threading.Timer(5.0, os._exit, args=(0,)).start()
 
@@ -759,7 +775,7 @@ def main(argv=None):
     all_relays = relays  # preserve full list for periodic re-checks
     previously_dead: dict[str, str | None] = {}
     relays, previously_dead = check_relays_alive(
-        all_relays, args, unreachable_relays=unreachable_relays)
+        all_relays, args, cache_dir, unreachable_relays=unreachable_relays)
     if not relays:
         raise SystemExit("No reachable relays -- aborting")
     log.info("continuing with %d/%d relays online, starting matrix probe", len(relays), len(all_relays))
@@ -797,7 +813,7 @@ def main(argv=None):
                     except Exception as e:
                         log.warning("Failed to refresh relay list: %s", e)
                 relays, previously_dead = check_relays_alive(
-                    all_relays, args, previously_dead=previously_dead,
+                    all_relays, args, cache_dir, previously_dead=previously_dead,
                     unreachable_relays=unreachable_relays)
                 last_alive_check = time.monotonic()
                 log.info("continuing with %d/%d relays online, next check in %ds", len(relays), len(all_relays), interval)

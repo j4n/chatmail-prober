@@ -105,7 +105,7 @@ class TestUnreachablePromotion:
             mock_pool.contexts.return_value = {}
             mock_pool_cls.return_value = mock_pool
             alive, dead = check_relays_alive(
-                normal, args,
+                normal, args, pathlib.Path(args.cache_dir),
                 unreachable_relays=unreachable,
             )
 
@@ -131,7 +131,7 @@ class TestUnreachablePromotion:
             mock_pool.contexts.return_value = {}
             mock_pool_cls.return_value = mock_pool
             alive, dead = check_relays_alive(
-                normal, args,
+                normal, args, pathlib.Path(args.cache_dir),
                 unreachable_relays=unreachable,
             )
 
@@ -158,7 +158,7 @@ class TestUnreachablePromotion:
             mock_pool_cls.return_value = mock_pool
             with caplog.at_level(logging.WARNING, logger="chatmail_prober.__main__"):
                 alive, dead = check_relays_alive(
-                    normal, args,
+                    normal, args, pathlib.Path(args.cache_dir),
                     unreachable_relays=unreachable,
                 )
 

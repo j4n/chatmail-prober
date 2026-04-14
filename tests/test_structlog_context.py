@@ -180,7 +180,7 @@ class TestCheckRelaysAliveContextBinding:
         monkeypatch.setattr("chatmail_prober.__main__.verify_relay_status", lambda r, e: -6)
 
         args = _make_args(tmp_path, workers=2)
-        check_relays_alive(["dead.relay", "ok.relay"], args)
+        check_relays_alive(["dead.relay", "ok.relay"], args, Path(args.cache_dir))
 
         captured = capsys.readouterr()
         warning_lines = [
@@ -205,7 +205,7 @@ class TestCheckRelaysAliveContextBinding:
         monkeypatch.setattr("chatmail_prober.__main__.verify_relay_status", lambda r, e: 1)
 
         args = _make_args(tmp_path, workers=1)
-        check_relays_alive(["ok.relay"], args)
+        check_relays_alive(["ok.relay"], args, Path(args.cache_dir))
 
         captured = capsys.readouterr()
         info_lines = [
