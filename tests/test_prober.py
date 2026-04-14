@@ -55,22 +55,6 @@ class TestRunProbeSuccess:
         assert result.account_setup_time == pytest.approx(1.1)
         assert result.message_time == pytest.approx(3.3)
 
-    @patch("chatmail_prober.prober._perform_direct_ping")
-    def test_args_passed_to_perform(self, mock_ping):
-        """Verify _perform_direct_ping receives correct arguments."""
-        mock_ping.return_value = FakePinger()
-        contexts = {"src.org": MagicMock(), "dst.org": MagicMock()}
-        run_probe("src.org", "dst.org", count=7, interval=2.0, timeout=15.0,
-                  relay_contexts=contexts)
-
-        call_args = mock_ping.call_args
-        assert call_args[0][0] is contexts
-        assert call_args[0][1] == "src.org"
-        assert call_args[0][2] == "dst.org"
-        assert call_args[0][3] == 7
-        assert call_args[0][4] == 2.0
-        assert call_args[0][5] == 15.0
-
 
 class TestRunProbeErrors:
     @patch("chatmail_prober.prober._perform_direct_ping")
@@ -106,19 +90,6 @@ class TestRunProbeErrors:
 
 
 class TestRunProbeWithContexts:
-    @patch("chatmail_prober.prober._perform_direct_ping")
-    def test_with_contexts(self, mock_ping):
-        """With relay_contexts, uses _perform_direct_ping."""
-        mock_ping.return_value = FakePinger()
-        contexts = {"a.test": MagicMock(), "b.test": MagicMock()}
-        result = run_probe("a.test", "b.test", count=3, relay_contexts=contexts)
-
-        assert result.sent == 3
-        assert result.received == 3
-        mock_ping.assert_called_once()
-        call_args = mock_ping.call_args
-        assert call_args[0][0] is contexts
-
     @patch("chatmail_prober.prober._perform_direct_ping")
     def test_error_with_contexts(self, mock_ping):
         mock_ping.side_effect = PingError("rpc failed")

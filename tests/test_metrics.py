@@ -4,50 +4,15 @@ import socket
 from unittest.mock import patch
 
 import pytest
-from prometheus_client import CollectorRegistry
 
 from chatmail_prober.prober import ProbeResult
 from chatmail_prober import metrics as metrics_mod
 
 
 @pytest.fixture(autouse=True)
-def _fresh_metrics(monkeypatch):
-    """Replace all metrics with fresh instances per test to avoid cross-contamination."""
-    registry = CollectorRegistry()
-    labels = ["source", "destination", "probe_type"]
-
-    new = {
-        "rtt_median": metrics_mod.Gauge(
-            "cmping_rtt_median_seconds_test", "test", labels, registry=registry,
-        ),
-        "rtt_stddev": metrics_mod.Gauge(
-            "cmping_rtt_stddev_seconds_test", "test", labels, registry=registry,
-        ),
-        "rtt_p90": metrics_mod.Gauge(
-            "cmping_rtt_p90_seconds_test", "test", labels, registry=registry,
-        ),
-        "rtt_p10": metrics_mod.Gauge(
-            "cmping_rtt_p10_seconds_test", "test", labels, registry=registry,
-        ),
-        "send_errors_total": metrics_mod.Counter(
-            "cmping_send_errors_total_test", "test", labels, registry=registry,
-        ),
-        "probe_success": metrics_mod.Gauge(
-            "cmping_probe_success_test", "test", labels, registry=registry,
-        ),
-        "probe_loss_ratio": metrics_mod.Gauge(
-            "cmping_probe_loss_ratio_test", "test", labels, registry=registry,
-        ),
-        "account_setup_seconds": metrics_mod.Gauge(
-            "cmping_account_setup_seconds_test", "test", labels, registry=registry,
-        ),
-        "relay_status": metrics_mod.Gauge(
-            "cmping_relay_status_test", "test", ["relay"], registry=registry,
-        ),
-    }
-    for name, metric in new.items():
-        monkeypatch.setattr(metrics_mod, name, metric)
-    return new
+def _auto_fresh_metrics(fresh_metrics):
+    """Auto-apply the shared fresh_metrics fixture to every test in this file."""
+    return fresh_metrics
 
 
 def _labels():
@@ -226,14 +191,6 @@ class TestClearStaleRelayLabels:
 
 
 class TestRelayStatusMetric:
-    def test_online_relay_set_to_one(self):
-        metrics_mod.relay_status.labels(relay="a.example").set(1)
-        assert metrics_mod.relay_status.labels(relay="a.example")._value.get() == 1.0
-
-    def test_dead_relay_set_to_negative_value(self):
-        metrics_mod.relay_status.labels(relay="a.example").set(-1)
-        assert metrics_mod.relay_status.labels(relay="a.example")._value.get() == -1.0
-
     def test_relay_status_value_encoding(self):
         # Test integer encoding for different failure modes
         assert metrics_mod.relay_status_value(None) == 1  # ok

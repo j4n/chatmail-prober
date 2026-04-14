@@ -51,7 +51,12 @@ def _err(src, dst, error):
 
 @pytest.fixture(autouse=True)
 def _fresh_metrics():
-    """Clear all prometheus label sets before each test."""
+    """Clear all prometheus label sets before each test.
+
+    Unlike conftest.fresh_metrics which replaces metric objects, this clears
+    the originals in place -- necessary because __main__.py holds its own
+    import binding to the real relay_status gauge.
+    """
     for metric in [
         metrics_mod.rtt_median, metrics_mod.rtt_stddev,
         metrics_mod.rtt_p90, metrics_mod.rtt_p10,
