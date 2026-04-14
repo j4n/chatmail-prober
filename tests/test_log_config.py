@@ -4,7 +4,7 @@ import logging
 
 import structlog
 
-from chatmail_prober.log_config import configure_logging, get_logger
+from chatmail_prober.log_config import configure_logging
 
 
 class TestConfigureLogging:
@@ -36,10 +36,7 @@ class TestConfigureLogging:
         captured = capsys.readouterr()
         assert "stdlib_message" in captured.err
 
-
-class TestRpcReadyFilter:
-    def test_rpc_ready_downgraded_to_debug(self):
-        """At INFO level, 'RPC server ready' records are dropped (DEBUG < INFO)."""
+    def test_rpc_ready_dropped_at_info_level(self):
         configure_logging(level=logging.INFO)
         handler = logging.getLogger().handlers[0]
         record = logging.LogRecord(
@@ -48,8 +45,7 @@ class TestRpcReadyFilter:
         )
         assert handler.filters[0].filter(record) is False
 
-    def test_rpc_ready_visible_at_debug(self):
-        """At DEBUG level, the record passes but is downgraded."""
+    def test_rpc_ready_visible_at_debug_level(self):
         configure_logging(level=logging.DEBUG)
         handler = logging.getLogger().handlers[0]
         record = logging.LogRecord(
@@ -58,10 +54,3 @@ class TestRpcReadyFilter:
         )
         assert handler.filters[0].filter(record) is True
         assert record.levelno == logging.DEBUG
-
-
-class TestGetLogger:
-    def test_returns_bound_logger(self):
-        log = get_logger("test.alias")
-        assert hasattr(log, "info")
-        assert hasattr(log, "warning")

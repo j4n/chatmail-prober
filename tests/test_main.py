@@ -547,3 +547,191 @@ class TestOptionalRelayFile:
              patch("chatmail_prober.__main__.print_metrics"):
             main(["-H", "nine.testrun.org", "--once",
                   "--cache-dir", str(cache)])
+
+
+# -- Tests merged from test_main_orchestration.py --
+# These test cross-module integration (orchestration + metrics) and need
+# to clear metrics in-place rather than replacing them, because
+# orchestration.py holds direct import bindings to the real gauge objects.
+
+
+def _orch_args(tmp_path, *, workers=3, timeout=90):
+    return argparse.Namespace(
+        cache_dir=str(tmp_path), workers=workers, timeout=timeout,
+        count=1, ping_interval=0.1, interval=900, once=True, verbose=0, exclude=[],
+    )
+
+
+def _ok(src, dst):
+    return ProbeResult(src, dst, sent=1, received=1, loss=0.0, rtts_ms=[50.0])
+
+
+def _err(src, dst, error):
+    return ProbeResult(src, dst, error=error)
+
+
+@pytest.fixture()
+def clear_metrics():
+    """Clear metric label sets in-place for integration tests."""
+    for metric in [
+        metrics_mod.rtt_median, metrics_mod.rtt_stddev,
+        metrics_mod.rtt_p90, metrics_mod.rtt_p10,
+        metrics_mod.probe_success, metrics_mod.probe_loss_ratio,
+        metrics_mod.account_setup_seconds, metrics_mod.send_errors_total,
+        metrics_mod.relay_status,
+    ]:
+        metric._metrics.clear()
+    yield
+
+
+class TestAliveCheckMetrics:
+    def test_dns_failure_sets_status_minus_six(self, tmp_path, monkeypatch, clear_metrics):
+        dns_error = (
+            "Failed to setup sender profile on host.abc: JsonRpcError: "
+            "{'code': -1, 'message': 'Error: IMAP failed to connect to "
+            "imap.host.abc:993:tls: Could not find DNS resolutions for "
+            "imap.host.abc:993. Check server hostname and your network'}"
+        )
+
+        def _probe(src, dst, count=1, interval=0.1, accounts_dir="",
+                   timeout=10, relay_contexts=None):
+            if src == "host.abc":
+                return _err(src, dst, dns_error)
+            return _ok(src, dst)
+
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
+        args = _orch_args(tmp_path, workers=2)
+        alive, dead = check_relays_alive(["host.abc", "host.good"], args, Path(args.cache_dir))
+
+        assert "host.abc" not in alive
+        assert metrics_mod.relay_status.labels(relay="host.abc")._value.get() == -6.0
+
+    def test_auth_failure_sets_status_minus_three(self, tmp_path, monkeypatch, clear_metrics):
+        auth_error = (
+            "Failed to setup sender profile on hostb.xyz: JsonRpcError: "
+            "{'code': -1, 'message': 'Error: Cannot login as "
+            '"user@hostb.xyz". [AUTHENTICATIONFAILED] Authentication failed.\'}'
+        )
+
+        def _probe(src, dst, count=1, interval=0.1, accounts_dir="",
+                   timeout=10, relay_contexts=None):
+            if src == "hostb.xyz":
+                return _err(src, dst, auth_error)
+            return _ok(src, dst)
+
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
+        args = _orch_args(tmp_path, workers=2)
+        check_relays_alive(["hostb.xyz", "host.good"], args, Path(args.cache_dir))
+
+        assert metrics_mod.relay_status.labels(relay="hostb.xyz")._value.get() == -3.0
+
+    def test_timeout_sets_status_minus_one(self, tmp_path, monkeypatch, clear_metrics):
+        timeout_error = (
+            "Failed to setup sender profile on hostd.xyz: JsonRpcError: "
+            "{'code': -1, 'message': 'Error: IMAP failed to connect to "
+            "hostd.xyz:993:tls: Connection timeout: deadline has elapsed'}"
+        )
+
+        def _probe(src, dst, count=1, interval=0.1, accounts_dir="",
+                   timeout=10, relay_contexts=None):
+            if src == "hostd.xyz":
+                return _err(src, dst, timeout_error)
+            return _ok(src, dst)
+
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
+        args = _orch_args(tmp_path, workers=2)
+        check_relays_alive(["hostd.xyz", "host.good"], args, Path(args.cache_dir))
+
+        assert metrics_mod.relay_status.labels(relay="hostd.xyz")._value.get() == -1.0
+
+    def test_online_relay_sets_status_one(self, tmp_path, monkeypatch, clear_metrics):
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe",
+                            lambda *a, **kw: _ok(a[0], a[1]))
+        args = _orch_args(tmp_path, workers=1)
+        alive, dead = check_relays_alive(["host.good"], args, Path(args.cache_dir))
+
+        assert alive == ["host.good"]
+        assert metrics_mod.relay_status.labels(relay="host.good")._value.get() == 1.0
+
+
+class TestReopenGuard:
+    """Application-level errors must not trigger pool.reopen() in run_round."""
+
+    def _run_with_tracking_pool(self, tmp_path, monkeypatch, error_relay, error_msg):
+        reopen_calls = []
+
+        class _TrackingPool:
+            def open_all(self, relays): pass
+            def contexts(self): return {}
+            def reopen(self, relay): reopen_calls.append(relay)
+            def close(self): pass
+
+        def _probe(src, dst, count=1, interval=0.1, accounts_dir="",
+                   timeout=10, relay_contexts=None):
+            if src == error_relay:
+                return _err(src, dst, error_msg)
+            return _ok(src, dst)
+
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            run_round(
+                [error_relay, "host.good"],
+                _orch_args(tmp_path, workers=1),
+                executors=[executor],
+                worker_pools=[_TrackingPool()],
+                shutdown_event=threading.Event(),
+            )
+        finally:
+            executor.shutdown(wait=False)
+        return reopen_calls
+
+    def test_dns_error_does_not_reopen(self, tmp_path, monkeypatch, clear_metrics):
+        calls = self._run_with_tracking_pool(
+            tmp_path, monkeypatch, "host.abc",
+            "Failed to setup: Could not find DNS resolutions for imap.host.abc:993",
+        )
+        assert calls == []
+
+    def test_timeout_does_not_reopen(self, tmp_path, monkeypatch, clear_metrics):
+        calls = self._run_with_tracking_pool(
+            tmp_path, monkeypatch, "hostc.zzz",
+            "Timeout waiting for user@hostc.zzz to come online",
+        )
+        assert calls == []
+
+
+class TestRunRoundMetrics:
+    def test_mixed_round_updates_metrics(self, tmp_path, monkeypatch, clear_metrics):
+        def _probe(src, dst, count=1, interval=0.1, accounts_dir="",
+                   timeout=10, relay_contexts=None):
+            if src == "bad.example":
+                return _err(src, dst, "connection refused")
+            return _ok(src, dst)
+
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
+
+        class _FakePool:
+            def open_all(self, relays): pass
+            def contexts(self): return {}
+            def reopen(self, relay): pass
+            def close(self): pass
+
+        executors = [ThreadPoolExecutor(max_workers=1), ThreadPoolExecutor(max_workers=1)]
+        try:
+            run_round(
+                ["good.example", "bad.example"],
+                _orch_args(tmp_path, workers=2),
+                executors=executors,
+                worker_pools=[_FakePool(), _FakePool()],
+                shutdown_event=threading.Event(),
+            )
+        finally:
+            for ex in executors:
+                ex.shutdown(wait=False)
+
+        good_lbl = dict(source="good.example", destination="good.example", probe_type="self")
+        assert metrics_mod.probe_success.labels(**good_lbl)._value.get() == 1.0
+
+        bad_lbl = dict(source="bad.example", destination="bad.example", probe_type="self")
+        assert metrics_mod.probe_success.labels(**bad_lbl)._value.get() == 0.0
