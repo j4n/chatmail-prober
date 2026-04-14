@@ -321,11 +321,8 @@ class TestHeartbeatMetrics:
         )
         monkeypatch.setattr(metrics_mod, "rounds_total", fresh_counter)
 
-        # Import here to pick up the monkeypatched counter
-        import importlib
-        import chatmail_prober.__main__ as main_mod
-        importlib.reload(main_mod)  # not needed; we patch the module attr directly
-        monkeypatch.setattr(main_mod, "rounds_total", fresh_counter)
+        import chatmail_prober.orchestration as orch_mod
+        monkeypatch.setattr(orch_mod, "rounds_total", fresh_counter)
 
         assert fresh_counter._value.get() == 0
         fresh_counter.inc()

@@ -469,7 +469,7 @@ class ProbeResult:
     destination: str
     sent: int = 0
     received: int = 0
-    loss: float = 100.0
+    loss: float = 100.0  # used in log output and CLI; metrics recomputes from sent/received
     rtts_ms: list[float] = field(default_factory=list)
     account_setup_time: float = 0.0
     message_time: float = 0.0

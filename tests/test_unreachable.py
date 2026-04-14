@@ -60,7 +60,7 @@ class TestReadUnreachableRelays:
 # check_relays_alive with unreachable relays
 # ---------------------------------------------------------------------------
 
-from chatmail_prober.__main__ import check_relays_alive
+from chatmail_prober.orchestration import check_relays_alive
 
 
 def _make_args(**kwargs):
@@ -97,7 +97,7 @@ class TestUnreachablePromotion:
 
         args = _make_args()
         with patch(
-            "chatmail_prober.__main__.run_probe", side_effect=fake_probe
+            "chatmail_prober.orchestration.run_probe", side_effect=fake_probe
         ), patch(
             "chatmail_prober.__main__.RelayPool"
         ) as mock_pool_cls:
@@ -123,7 +123,7 @@ class TestUnreachablePromotion:
 
         args = _make_args()
         with patch(
-            "chatmail_prober.__main__.run_probe", side_effect=fake_probe
+            "chatmail_prober.orchestration.run_probe", side_effect=fake_probe
         ), patch(
             "chatmail_prober.__main__.RelayPool"
         ) as mock_pool_cls:
@@ -149,7 +149,7 @@ class TestUnreachablePromotion:
 
         args = _make_args()
         with patch(
-            "chatmail_prober.__main__.run_probe", side_effect=fake_probe
+            "chatmail_prober.orchestration.run_probe", side_effect=fake_probe
         ), patch(
             "chatmail_prober.__main__.RelayPool"
         ) as mock_pool_cls:

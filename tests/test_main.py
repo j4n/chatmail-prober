@@ -12,8 +12,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 from chatmail_prober.__main__ import (
     main, read_relay_list, read_exclude_list, parse_args,
-    run_round, check_relays_alive,
-    _SupprRpcClosedFilter, _RPC_CRASH_KEYWORDS,
+    _SupprRpcClosedFilter,
+)
+from chatmail_prober.orchestration import (
+    check_relays_alive, run_round, _RPC_CRASH_KEYWORDS,
 )
 from chatmail_prober.output import print_metrics
 from chatmail_prober.prober import ProbeResult
@@ -151,7 +153,7 @@ def _make_worker_pools(n):
 
 class TestRunRound:
     def test_completes_all_pairs(self, tmp_path, monkeypatch, fresh_metrics):
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _fake_probe)
         relays = ["a.example", "b.example", "c.example"]
         args = _make_args(tmp_path, workers=2)
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
@@ -182,7 +184,7 @@ class TestRunRound:
                 shutdown_event.set()
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _slow_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _slow_probe)
         relays = ["a.example", "b.example", "c.example"]
         args = _make_args(tmp_path, workers=1)  # single worker for deterministic ordering
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
@@ -213,7 +215,7 @@ class TestRunRound:
                 raise RuntimeError("boom")
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _crashing_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _crashing_probe)
         relays = ["a.example", "b.example"]
         args = _make_args(tmp_path, workers=2)
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
@@ -240,7 +242,7 @@ class TestCheckRelaysAlive:
                 return ProbeResult(source, dest, error="connection refused")
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _selective_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _selective_probe)
         relays = ["a.example", "dead.example", "b.example"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
@@ -250,7 +252,7 @@ class TestCheckRelaysAlive:
         assert set(dead_set) == {"dead.example"}
 
     def test_all_alive(self, tmp_path, monkeypatch, fresh_metrics):
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _fake_probe)
         relays = ["a.example", "b.example", "c.example"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
@@ -271,10 +273,8 @@ class TestCheckRelaysAlive:
             return ProbeResult(source, dest, sent=1, received=1,
                                loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _flaky_probe)
-        monkeypatch.setattr("chatmail_prober.__main__.time.sleep", lambda _: None)
-        monkeypatch.setattr("chatmail_prober.__main__.is_transient_alive_error",
-                            lambda r, e: e is not None and "timeout" in e.lower())
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _flaky_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.time.sleep", lambda _: None)
         relays = ["a.example", "flaky.example", "b.example"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
@@ -297,10 +297,8 @@ class TestCheckRelaysAlive:
             return ProbeResult(source, dest, sent=1, received=1,
                                loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _failing_probe)
-        monkeypatch.setattr("chatmail_prober.__main__.time.sleep", lambda _: None)
-        monkeypatch.setattr("chatmail_prober.__main__.is_transient_alive_error",
-                            lambda r, e: False)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _failing_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.time.sleep", lambda _: None)
         relays = ["a.example", "auth.example", "refused.example"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
@@ -323,10 +321,8 @@ class TestCheckRelaysAlive:
             return ProbeResult(source, dest, sent=1, received=1,
                                loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _always_timeout)
-        monkeypatch.setattr("chatmail_prober.__main__.time.sleep", lambda _: None)
-        monkeypatch.setattr("chatmail_prober.__main__.is_transient_alive_error",
-                            lambda r, e: e is not None and "timeout" in e.lower())
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _always_timeout)
+        monkeypatch.setattr("chatmail_prober.orchestration.time.sleep", lambda _: None)
         relays = ["a.example", "slow.example"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
@@ -337,7 +333,7 @@ class TestCheckRelaysAlive:
 
     def test_no_retry_when_all_alive(self, tmp_path, monkeypatch, fresh_metrics):
         """No retry logic triggered when all relays pass first time."""
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _fake_probe)
         relays = ["a.example", "b.example"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
@@ -357,10 +353,8 @@ class TestCheckRelaysAlive:
             return ProbeResult(source, dest, sent=1, received=1,
                                loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _always_timeout)
-        monkeypatch.setattr("chatmail_prober.__main__.time.sleep", lambda _: None)
-        monkeypatch.setattr("chatmail_prober.__main__.is_transient_alive_error",
-                            lambda r, e: e is not None and "timeout" in e.lower())
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _always_timeout)
+        monkeypatch.setattr("chatmail_prober.orchestration.time.sleep", lambda _: None)
         relays = ["a.example", "known.dead"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(
@@ -372,7 +366,7 @@ class TestCheckRelaysAlive:
 
     def test_previously_dead_recovery_detected(self, tmp_path, monkeypatch, fresh_metrics):
         """A previously-dead relay that now succeeds is included."""
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _fake_probe)
         relays = ["a.example", "recovered.example"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(
@@ -410,7 +404,7 @@ class TestRunRoundExclude:
             probed_pairs.append((source, dest))
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _tracking_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _tracking_probe)
         relays = ["a.example", "b.example"]
         args = _make_args(tmp_path, workers=2)
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
@@ -426,9 +420,6 @@ class TestRunRoundExclude:
         assert len(probed_pairs) == 3
         assert ("a.example", "b.example") not in probed_pairs
 
-
-import logging
-from chatmail_prober.__main__ import _SupprRpcClosedFilter, _RPC_CRASH_KEYWORDS
 
 
 class TestSupprRpcClosedFilter:

@@ -17,7 +17,7 @@ import pytest
 
 from chatmail_prober.prober import ProbeResult
 from chatmail_prober import metrics as metrics_mod
-from chatmail_prober.__main__ import check_relays_alive, run_round
+from chatmail_prober.orchestration import check_relays_alive, run_round
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ class TestAliveCheckMetrics:
                 return _err(src, dst, dns_error)
             return _ok(src, dst)
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
         args = _make_args(tmp_path, workers=2)
         alive, dead_set = check_relays_alive(["host.abc", "host.good"], args, Path(args.cache_dir))
 
@@ -112,7 +112,7 @@ class TestAliveCheckMetrics:
                 return _err(src, dst, auth_error)
             return _ok(src, dst)
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
         args = _make_args(tmp_path, workers=2)
         alive, dead_set = check_relays_alive(["hostb.xyz", "host.good"], args, Path(args.cache_dir))
 
@@ -132,7 +132,7 @@ class TestAliveCheckMetrics:
                 return _err(src, dst, timeout_error)
             return _ok(src, dst)
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
         args = _make_args(tmp_path, workers=2)
         alive, dead_set = check_relays_alive(["hostd.xyz", "host.good"], args, Path(args.cache_dir))
 
@@ -140,7 +140,7 @@ class TestAliveCheckMetrics:
         assert metrics_mod.relay_status.labels(relay="hostd.xyz")._value.get() == -1.0
 
     def test_online_relay_sets_status_one(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe",
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe",
                             lambda *a, **kw: _ok(a[0], a[1]))
         args = _make_args(tmp_path, workers=1)
         alive, dead_set = check_relays_alive(["host.good"], args, Path(args.cache_dir))
@@ -180,7 +180,7 @@ class TestAliveCheckDoesNotTriggerReopen:
                 return _err(src, dst, dns_error)
             return _ok(src, dst)
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
 
         from concurrent.futures import ThreadPoolExecutor
         executor = ThreadPoolExecutor(max_workers=1)
@@ -222,7 +222,7 @@ class TestAliveCheckDoesNotTriggerReopen:
                 return _err(src, dst, timeout_error)
             return _ok(src, dst)
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
 
         from concurrent.futures import ThreadPoolExecutor
         executor = ThreadPoolExecutor(max_workers=1)
@@ -261,7 +261,7 @@ class TestRunRoundMetrics:
                 return _err(src, dst, "connection refused")
             return _ok(src, dst)
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
 
         from concurrent.futures import ThreadPoolExecutor
 
