@@ -1,16 +1,21 @@
 """Tests for config parsing, CLI args, pair generation, and orchestration."""
 
 import argparse
+import logging
 import threading
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from concurrent.futures import ThreadPoolExecutor
 
 from chatmail_prober.__main__ import (
-    read_relay_list, read_exclude_list, parse_args, run_round, check_relays_alive,
+    main, read_relay_list, read_exclude_list, parse_args,
+    run_round, check_relays_alive,
+    _SupprRpcClosedFilter, _RPC_CRASH_KEYWORDS,
 )
+from chatmail_prober.output import print_metrics
 from chatmail_prober.prober import ProbeResult
 from chatmail_prober import metrics as metrics_mod
 
@@ -420,3 +425,134 @@ class TestRunRoundExclude:
         # 4 pairs minus 1 excluded = 3
         assert len(probed_pairs) == 3
         assert ("a.example", "b.example") not in probed_pairs
+
+
+import logging
+from chatmail_prober.__main__ import _SupprRpcClosedFilter, _RPC_CRASH_KEYWORDS
+
+
+class TestSupprRpcClosedFilter:
+    def _make_record(self, msg):
+        return logging.LogRecord("test", logging.ERROR, "", 0, msg, (), None)
+
+    def test_passes_during_normal_operation(self):
+        f = _SupprRpcClosedFilter(threading.Event())
+        assert f.filter(self._make_record("RPC server closed")) is True
+
+    def test_suppresses_during_shutdown(self):
+        event = threading.Event()
+        event.set()
+        f = _SupprRpcClosedFilter(event)
+        assert f.filter(self._make_record("RPC server closed")) is False
+
+    def test_passes_unrelated_errors_during_shutdown(self):
+        event = threading.Event()
+        event.set()
+        f = _SupprRpcClosedFilter(event)
+        assert f.filter(self._make_record("Some other error")) is True
+
+
+class TestRpcCrashKeywords:
+    """Verify _RPC_CRASH_KEYWORDS matches transport errors but not app errors."""
+
+    @pytest.mark.parametrize("error", [
+        "Failed to setup sender profile on host.abc: JsonRpcError: "
+        "{'code': -1, 'message': 'Could not find DNS resolutions'}",
+        "AUTHENTICATIONFAILED: login failed",
+        "Connection timeout: deadline has elapsed",
+        "Failed to setup sender profile on relay.example: SomeError: details",
+    ])
+    def test_app_errors_do_not_match(self, error):
+        assert not any(kw in error.lower() for kw in _RPC_CRASH_KEYWORDS)
+
+    @pytest.mark.parametrize("error", [
+        "RPC server closed",
+        "rpc process crashed",
+        "BrokenPipeError writing to rpc stdin",
+        "ConnectionResetError: [Errno 104] Connection reset by peer",
+        "EOFError reading from rpc server",
+    ])
+    def test_transport_errors_do_match(self, error):
+        assert any(kw in error.lower() for kw in _RPC_CRASH_KEYWORDS)
+
+
+# -- Tests merged from test_print_flag.py, test_print_metrics.py,
+#    test_optional_relay_file.py --
+
+
+def _run_main_once(tmp_path, extra_flags=()):
+    relay_file = tmp_path / "relays.txt"
+    relay_file.write_text("nine.testrun.org\n")
+    argv = [str(relay_file), "--once"] + list(extra_flags)
+    with patch("chatmail_prober.__main__.check_relays_alive",
+               return_value=(["nine.testrun.org"], set())), \
+         patch("chatmail_prober.__main__.run_round",
+               return_value=(0.1, [])), \
+         patch("chatmail_prober.__main__.render_summary") as mock_render, \
+         patch("chatmail_prober.__main__.print_metrics") as mock_pm, \
+         patch("chatmail_prober.__main__.write_textfile"):
+        main(argv)
+    return mock_render, mock_pm
+
+
+class TestPrintFlag:
+    def test_once_without_print_does_not_render(self, tmp_path):
+        mock_render, _ = _run_main_once(tmp_path)
+        mock_render.assert_not_called()
+
+    def test_once_with_print_renders(self, tmp_path):
+        mock_render, _ = _run_main_once(tmp_path, extra_flags=["--print"])
+        mock_render.assert_called_once()
+
+    def test_once_with_print_metrics_calls_print_metrics(self, tmp_path):
+        _, mock_pm = _run_main_once(tmp_path, extra_flags=["--print-metrics"])
+        mock_pm.assert_called_once()
+
+
+class TestPrintMetrics:
+    def test_flag_defaults_to_false(self):
+        args = parse_args(["r.txt"])
+        assert args.print_metrics is False
+
+    def test_flag_accepted(self):
+        args = parse_args(["r.txt", "--print-metrics"])
+        assert args.print_metrics is True
+
+    def test_writes_to_stdout(self, capsys):
+        print_metrics()
+        assert len(capsys.readouterr().out) > 0
+
+
+class TestOptionalRelayFile:
+    def test_hosts_flag_needs_no_relay_file(self):
+        args = parse_args(["-H", "nine.testrun.org"])
+        assert args.hosts == "nine.testrun.org"
+        assert args.relays == []
+
+    def test_reset_needs_no_relay_file(self):
+        args = parse_args(["--reset", "all"])
+        assert args.reset == ["all"]
+
+    def test_no_relay_source_errors(self, tmp_path):
+        with pytest.raises(SystemExit):
+            main(["--cache-dir", str(tmp_path / "cache")])
+
+    def test_reset_without_relay_file_succeeds(self, tmp_path):
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        with patch("chatmail_prober.__main__.reset_accounts"):
+            with pytest.raises(SystemExit) as exc_info:
+                main(["--reset", "all", "--cache-dir", str(cache)])
+        assert exc_info.value.code in (0, None)
+
+    def test_hosts_without_relay_file_proceeds(self, tmp_path):
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        with patch("chatmail_prober.__main__.check_relays_alive",
+                   return_value=(["nine.testrun.org"], set())), \
+             patch("chatmail_prober.__main__.run_round", return_value=(0.1, [])), \
+             patch("chatmail_prober.__main__.render_summary"), \
+             patch("chatmail_prober.__main__.write_textfile"), \
+             patch("chatmail_prober.__main__.print_metrics"):
+            main(["-H", "nine.testrun.org", "--once",
+                  "--cache-dir", str(cache)])

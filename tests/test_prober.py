@@ -4,8 +4,11 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+import urllib.parse
+
 from chatmail_prober.prober import (
     run_probe, ProbeResult, RelayPool, PingError, _is_fatal_error,
+    create_qr_url, is_ip_address,
 )
 
 
@@ -222,3 +225,38 @@ class TestIsFatalError:
     def test_timeout_not_fatal(self):
         # Timeouts are handled by the deadline, not by _is_fatal_error
         assert not _is_fatal_error("Connection timed out")
+
+
+# -- Tests merged from test_ip_relay.py --
+
+
+class TestIsIpAddress:
+    def test_ipv4_detected(self):
+        assert is_ip_address("192.168.1.1") is True
+
+    def test_ipv6_detected(self):
+        assert is_ip_address("::1") is True
+        assert is_ip_address("2001:db8::1") is True
+
+    def test_domain_not_ip(self):
+        assert is_ip_address("nine.testrun.org") is False
+
+    def test_empty_string_not_ip(self):
+        assert is_ip_address("") is False
+
+
+class TestCreateQrUrl:
+    def test_domain_produces_dcaccount_url(self):
+        assert create_qr_url("nine.testrun.org") == "dcaccount:nine.testrun.org"
+
+    def test_ip_produces_dclogin_url(self):
+        url = create_qr_url("192.168.1.1")
+        assert url.startswith("dclogin:")
+        assert "192.168.1.1" in url
+
+    def test_dclogin_url_has_required_params(self):
+        url = create_qr_url("192.168.1.1")
+        qs = urllib.parse.parse_qs(url.split("?")[1]) if "?" in url else {}
+        assert "p" in qs
+        assert "ip" in qs
+        assert "sp" in qs
