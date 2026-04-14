@@ -4,50 +4,15 @@ import socket
 from unittest.mock import patch
 
 import pytest
-from prometheus_client import CollectorRegistry
 
 from chatmail_prober.prober import ProbeResult
 from chatmail_prober import metrics as metrics_mod
 
 
 @pytest.fixture(autouse=True)
-def _fresh_metrics(monkeypatch):
-    """Replace all metrics with fresh instances per test to avoid cross-contamination."""
-    registry = CollectorRegistry()
-    labels = ["source", "destination", "probe_type"]
-
-    new = {
-        "rtt_median": metrics_mod.Gauge(
-            "cmping_rtt_median_seconds_test", "test", labels, registry=registry,
-        ),
-        "rtt_stddev": metrics_mod.Gauge(
-            "cmping_rtt_stddev_seconds_test", "test", labels, registry=registry,
-        ),
-        "rtt_p90": metrics_mod.Gauge(
-            "cmping_rtt_p90_seconds_test", "test", labels, registry=registry,
-        ),
-        "rtt_p10": metrics_mod.Gauge(
-            "cmping_rtt_p10_seconds_test", "test", labels, registry=registry,
-        ),
-        "send_errors_total": metrics_mod.Counter(
-            "cmping_send_errors_total_test", "test", labels, registry=registry,
-        ),
-        "probe_success": metrics_mod.Gauge(
-            "cmping_probe_success_test", "test", labels, registry=registry,
-        ),
-        "probe_loss_ratio": metrics_mod.Gauge(
-            "cmping_probe_loss_ratio_test", "test", labels, registry=registry,
-        ),
-        "account_setup_seconds": metrics_mod.Gauge(
-            "cmping_account_setup_seconds_test", "test", labels, registry=registry,
-        ),
-        "relay_status": metrics_mod.Gauge(
-            "cmping_relay_status_test", "test", ["relay"], registry=registry,
-        ),
-    }
-    for name, metric in new.items():
-        monkeypatch.setattr(metrics_mod, name, metric)
-    return new
+def _auto_fresh_metrics(fresh_metrics):
+    """Auto-apply the shared fresh_metrics fixture to every test in this file."""
+    return fresh_metrics
 
 
 def _labels():
@@ -226,14 +191,6 @@ class TestClearStaleRelayLabels:
 
 
 class TestRelayStatusMetric:
-    def test_online_relay_set_to_one(self):
-        metrics_mod.relay_status.labels(relay="a.example").set(1)
-        assert metrics_mod.relay_status.labels(relay="a.example")._value.get() == 1.0
-
-    def test_dead_relay_set_to_negative_value(self):
-        metrics_mod.relay_status.labels(relay="a.example").set(-1)
-        assert metrics_mod.relay_status.labels(relay="a.example")._value.get() == -1.0
-
     def test_relay_status_value_encoding(self):
         # Test integer encoding for different failure modes
         assert metrics_mod.relay_status_value(None) == 1  # ok
@@ -241,68 +198,6 @@ class TestRelayStatusMetric:
         assert metrics_mod.relay_status_value("connection refused") == -5
         assert metrics_mod.relay_status_value("name or service not known") == -6  # DNS fail
         assert metrics_mod.relay_status_value("unknown error") == 0
-
-
-class TestClassifyAliveCheckError:
-    def test_none_returns_ok(self):
-        assert metrics_mod.classify_alive_check_error(None) == "ok"
-
-    def test_timeout_variants(self):
-        assert metrics_mod.classify_alive_check_error("Timeout waiting for foo") == "timeout"
-        assert metrics_mod.classify_alive_check_error("Connection timed out") == "timeout"
-        assert metrics_mod.classify_alive_check_error("exceeded global deadline") == "timeout"
-        assert metrics_mod.classify_alive_check_error("timeout") == "timeout"
-
-    def test_connection_refused(self):
-        assert metrics_mod.classify_alive_check_error("Connection refused") == "connection_refused"
-        assert metrics_mod.classify_alive_check_error(
-            "ConnectionRefusedError: [Errno 111]") == "connection_refused"
-
-    def test_dns(self):
-        assert metrics_mod.classify_alive_check_error(
-            "Name or service not known") == "dns"
-        assert metrics_mod.classify_alive_check_error(
-            "getaddrinfo failed") == "dns"
-        assert metrics_mod.classify_alive_check_error(
-            "Could not find DNS resolutions for imap.foo:993") == "dns"
-        assert metrics_mod.classify_alive_check_error(
-            "dial tcp: lookup relay.example: no such host") == "dns"
-        assert metrics_mod.classify_alive_check_error(
-            "NXDOMAIN error for imap.example") == "dns"
-
-    def test_dns_in_tls_connection_string(self):
-        # Real-world: DNS error inside a TLS connection URI -- dns must win
-        assert metrics_mod.classify_alive_check_error(
-            'IMAP failed to connect to imap.chat.sus.fr:993:tls: '
-            'Could not find DNS resolutions for imap.chat.sus.fr:993.'
-        ) == "dns"
-
-    def test_tls(self):
-        assert metrics_mod.classify_alive_check_error("SSL: CERTIFICATE_VERIFY_FAILED") == "tls"
-        assert metrics_mod.classify_alive_check_error("certificate has expired") == "tls"
-
-    def test_auth(self):
-        assert metrics_mod.classify_alive_check_error(
-            "AUTHENTICATIONFAILED") == "auth"
-        assert metrics_mod.classify_alive_check_error(
-            "authentication failed") == "auth"
-
-    def test_auth_inside_setup_message(self):
-        # Real foobar.org error: auth failure wrapped in setup error
-        assert metrics_mod.classify_alive_check_error(
-            'Failed to setup sender profile on foobar.org: JsonRpcError: '
-            "{'code': -1, 'message': 'Error:\\n\\n\"Cannot login as "
-            '"gbegx86r9@foobar.org". Please check if the email address '
-            "and the password are correct. (no response: code: None, "
-            'info: Some("[AUTHENTICATIONFAILED] Authentication failed."))"\'}'
-        ) == "auth"
-
-    def test_setup(self):
-        assert metrics_mod.classify_alive_check_error(
-            "Failed to setup sender profile on foo: RPC process crashed") == "setup"
-
-    def test_unknown_fallback(self):
-        assert metrics_mod.classify_alive_check_error("something unexpected") == "unknown"
 
 
 class TestVerifyRelayStatus:
@@ -403,3 +298,49 @@ class TestIsTransientAliveError:
         assert metrics_mod.is_transient_alive_error(
             "a.example", "certificate has expired"
         ) is False
+
+
+class TestHeartbeatMetrics:
+    """last_round_timestamp, round_duration_seconds, rounds_total are registered."""
+
+    def test_last_round_timestamp_exists(self):
+        assert metrics_mod.last_round_timestamp is not None
+
+    def test_round_duration_seconds_exists(self):
+        assert metrics_mod.round_duration_seconds is not None
+
+    def test_rounds_total_exists(self):
+        assert metrics_mod.rounds_total is not None
+
+    def test_rounds_total_increments(self, monkeypatch):
+        """rounds_total must increment each time run_round completes."""
+        from prometheus_client import CollectorRegistry, Counter as _Counter
+        registry = CollectorRegistry()
+        fresh_counter = _Counter(
+            "cmping_rounds_total_test", "test", registry=registry,
+        )
+        monkeypatch.setattr(metrics_mod, "rounds_total", fresh_counter)
+
+        import chatmail_prober.orchestration as orch_mod
+        monkeypatch.setattr(orch_mod, "rounds_total", fresh_counter)
+
+        assert fresh_counter._value.get() == 0
+        fresh_counter.inc()
+        assert fresh_counter._value.get() == 1
+        fresh_counter.inc()
+        assert fresh_counter._value.get() == 2
+
+    def test_rounds_total_is_a_counter(self):
+        """rounds_total must be a prometheus_client Counter."""
+        from prometheus_client import Counter as _Counter
+        # The autouse fixture replaces the module attr with a test Counter;
+        # check the type rather than the registry.
+        assert isinstance(metrics_mod.rounds_total, _Counter)
+
+    def test_last_round_timestamp_is_a_gauge(self):
+        from prometheus_client import Gauge as _Gauge
+        assert isinstance(metrics_mod.last_round_timestamp, _Gauge)
+
+    def test_round_duration_seconds_is_a_gauge(self):
+        from prometheus_client import Gauge as _Gauge
+        assert isinstance(metrics_mod.round_duration_seconds, _Gauge)

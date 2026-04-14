@@ -1,16 +1,23 @@
 """Tests for config parsing, CLI args, pair generation, and orchestration."""
 
 import argparse
+import logging
 import threading
 import time
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from concurrent.futures import ThreadPoolExecutor
-from prometheus_client import CollectorRegistry
 
 from chatmail_prober.__main__ import (
-    read_relay_list, read_exclude_list, parse_args, run_round, check_relays_alive,
+    main, read_relay_list, read_exclude_list, parse_args,
+    _SupprRpcClosedFilter,
 )
+from chatmail_prober.orchestration import (
+    check_relays_alive, run_round, _RPC_CRASH_KEYWORDS,
+)
+from chatmail_prober.output import print_metrics
 from chatmail_prober.prober import ProbeResult
 from chatmail_prober import metrics as metrics_mod
 
@@ -72,13 +79,16 @@ class TestParseArgs:
         assert args.quiet is True
         assert args.verbose == 0
 
-    def test_reset_flag(self):
-        args = parse_args(["r.txt", "--reset"])
-        assert args.reset is True
+    def test_reset_bare_errors(self):
+        # --reset with no domains must raise SystemExit with non-zero code
+        with pytest.raises(SystemExit) as exc_info:
+            parse_args(["r.txt", "--reset"])
+        assert exc_info.value.code != 0
 
-    def test_reset_default_false(self):
+    def test_reset_default_is_none(self):
+        # omitting --reset -> None (no reset)
         args = parse_args(["r.txt"])
-        assert args.reset is False
+        assert args.reset is None
 
     def test_all_flags(self):
         args = parse_args([
@@ -106,29 +116,6 @@ class TestParseArgs:
         assert args.verbose == 2
 
 
-class TestPairGeneration:
-    """Verify the pair matrix logic from __main__.py."""
-
-    def test_single_relay_produces_self_loop(self):
-        relays = ["a.example"]
-        pairs = [(s, d) for s in relays for d in relays]
-        assert pairs == [("a.example", "a.example")]
-
-    def test_two_relays_produce_four_pairs(self):
-        relays = ["a.example", "b.example"]
-        pairs = [(s, d) for s in relays for d in relays]
-        assert len(pairs) == 4
-        assert ("a.example", "a.example") in pairs
-        assert ("a.example", "b.example") in pairs
-        assert ("b.example", "a.example") in pairs
-        assert ("b.example", "b.example") in pairs
-
-    def test_three_relays_produce_nine_pairs(self):
-        relays = ["a", "b", "c"]
-        pairs = [(s, d) for s in relays for d in relays]
-        assert len(pairs) == 9
-
-
 # -- Orchestration tests (run_round, check_relays_alive) --
 
 
@@ -138,26 +125,6 @@ def _make_args(tmp_path, workers=2):
         cache_dir=str(tmp_path / "cache"), verbose=0,
     )
 
-
-@pytest.fixture(autouse=False)
-def _fresh_metrics(monkeypatch):
-    """Replace metrics with fresh instances to avoid cross-contamination."""
-    registry = CollectorRegistry()
-    labels = ["source", "destination", "probe_type"]
-    new = {
-        "rtt_median": metrics_mod.Gauge("m_test", "t", labels, registry=registry),
-        "rtt_stddev": metrics_mod.Gauge("s_test", "t", labels, registry=registry),
-        "rtt_p90": metrics_mod.Gauge("p90_test", "t", labels, registry=registry),
-        "rtt_p10": metrics_mod.Gauge("p10_test", "t", labels, registry=registry),
-        "send_errors_total": metrics_mod.Counter("e_test", "t", labels, registry=registry),
-        "probe_success": metrics_mod.Gauge("ps_test", "t", labels, registry=registry),
-        "probe_loss_ratio": metrics_mod.Gauge("lr_test", "t", labels, registry=registry),
-        "account_setup_seconds": metrics_mod.Gauge("as_test", "t", labels, registry=registry),
-        "relay_status": metrics_mod.Gauge("rs_test", "t", ["relay"], registry=registry),
-    }
-    for name, metric in new.items():
-        monkeypatch.setattr(metrics_mod, name, metric)
-    return new
 
 
 def _fake_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, relay_contexts=None):
@@ -185,13 +152,13 @@ def _make_worker_pools(n):
 
 
 class TestRunRound:
-    def test_completes_all_pairs(self, tmp_path, monkeypatch, _fresh_metrics):
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
+    def test_completes_all_pairs(self, tmp_path, monkeypatch, fresh_metrics):
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _fake_probe)
         relays = ["a.example", "b.example", "c.example"]
         args = _make_args(tmp_path, workers=2)
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
         try:
-            run_round(relays, args, executors, _make_worker_pools(args.workers))
+            run_round(relays, args, executors, _make_worker_pools(args.workers), shutdown_event=threading.Event())
         finally:
             for ex in executors:
                 ex.shutdown(wait=False)
@@ -204,7 +171,7 @@ class TestRunRound:
                     source=s, destination=d, probe_type=pt)._value.get()
                 assert val == 1.0, f"{s} -> {d} not recorded"
 
-    def test_shutdown_skips_metrics(self, tmp_path, monkeypatch, _fresh_metrics):
+    def test_shutdown_skips_metrics(self, tmp_path, monkeypatch, fresh_metrics):
         shutdown_event = threading.Event()
         call_count = 0
 
@@ -217,13 +184,13 @@ class TestRunRound:
                 shutdown_event.set()
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _slow_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _slow_probe)
         relays = ["a.example", "b.example", "c.example"]
         args = _make_args(tmp_path, workers=1)  # single worker for deterministic ordering
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
         try:
             run_round(relays, args, executors, _make_worker_pools(args.workers),
-                      shutdown_event)
+                      shutdown_event=shutdown_event)
         finally:
             for ex in executors:
                 ex.shutdown(wait=False)
@@ -242,18 +209,18 @@ class TestRunRound:
                     pass
         assert recorded < 9, f"Expected some pairs skipped, but all {recorded} recorded"
 
-    def test_crashed_probe_records_error(self, tmp_path, monkeypatch, _fresh_metrics):
+    def test_crashed_probe_records_error(self, tmp_path, monkeypatch, fresh_metrics):
         def _crashing_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, relay_contexts=None):
             if source == "a.example" and dest == "b.example":
                 raise RuntimeError("boom")
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _crashing_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _crashing_probe)
         relays = ["a.example", "b.example"]
         args = _make_args(tmp_path, workers=2)
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
         try:
-            run_round(relays, args, executors, _make_worker_pools(args.workers))
+            run_round(relays, args, executors, _make_worker_pools(args.workers), shutdown_event=threading.Event())
         finally:
             for ex in executors:
                 ex.shutdown(wait=False)
@@ -269,31 +236,31 @@ class TestRunRound:
 
 
 class TestCheckRelaysAlive:
-    def test_filters_dead_relays(self, tmp_path, monkeypatch, _fresh_metrics):
+    def test_filters_dead_relays(self, tmp_path, monkeypatch, fresh_metrics):
         def _selective_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, relay_contexts=None):
             if source == "dead.example":
                 return ProbeResult(source, dest, error="connection refused")
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _selective_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _selective_probe)
         relays = ["a.example", "dead.example", "b.example"]
         args = _make_args(tmp_path, workers=3)
-        alive, dead_set = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
 
         assert alive == ["a.example", "b.example"]
         assert "dead.example" not in alive
-        assert dead_set == {"dead.example"}
+        assert set(dead_set) == {"dead.example"}
 
-    def test_all_alive(self, tmp_path, monkeypatch, _fresh_metrics):
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
+    def test_all_alive(self, tmp_path, monkeypatch, fresh_metrics):
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _fake_probe)
         relays = ["a.example", "b.example", "c.example"]
         args = _make_args(tmp_path, workers=3)
-        alive, dead_set = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
 
         assert alive == relays
-        assert dead_set == set()
+        assert dead_set == {}
 
-    def test_retries_transient_errors(self, tmp_path, monkeypatch, _fresh_metrics):
+    def test_retries_transient_errors(self, tmp_path, monkeypatch, fresh_metrics):
         """Relays with transient errors (timeout) are retried and can recover."""
         call_count = {}
 
@@ -306,19 +273,17 @@ class TestCheckRelaysAlive:
             return ProbeResult(source, dest, sent=1, received=1,
                                loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _flaky_probe)
-        monkeypatch.setattr("chatmail_prober.__main__.time.sleep", lambda _: None)
-        monkeypatch.setattr("chatmail_prober.__main__.is_transient_alive_error",
-                            lambda r, e: e is not None and "timeout" in e.lower())
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _flaky_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.time.sleep", lambda _: None)
         relays = ["a.example", "flaky.example", "b.example"]
         args = _make_args(tmp_path, workers=3)
-        alive, dead_set = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
 
         assert "flaky.example" in alive
         assert "flaky.example" not in dead_set
         assert call_count["flaky.example"] == 2  # initial + 1 retry
 
-    def test_no_retry_for_persistent_errors(self, tmp_path, monkeypatch, _fresh_metrics):
+    def test_no_retry_for_persistent_errors(self, tmp_path, monkeypatch, fresh_metrics):
         """Relays with persistent errors (auth, connection refused) are not retried."""
         call_count = {}
 
@@ -332,21 +297,19 @@ class TestCheckRelaysAlive:
             return ProbeResult(source, dest, sent=1, received=1,
                                loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _failing_probe)
-        monkeypatch.setattr("chatmail_prober.__main__.time.sleep", lambda _: None)
-        monkeypatch.setattr("chatmail_prober.__main__.is_transient_alive_error",
-                            lambda r, e: False)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _failing_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.time.sleep", lambda _: None)
         relays = ["a.example", "auth.example", "refused.example"]
         args = _make_args(tmp_path, workers=3)
-        alive, dead_set = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
 
         assert "auth.example" not in alive
         assert "refused.example" not in alive
-        assert dead_set == {"auth.example", "refused.example"}
+        assert set(dead_set) == {"auth.example", "refused.example"}
         assert call_count["auth.example"] == 1
         assert call_count["refused.example"] == 1
 
-    def test_retry_gives_up_after_max_retries(self, tmp_path, monkeypatch, _fresh_metrics):
+    def test_retry_gives_up_after_max_retries(self, tmp_path, monkeypatch, fresh_metrics):
         """Relays that keep timing out are excluded after max retries."""
         call_count = {}
 
@@ -358,29 +321,27 @@ class TestCheckRelaysAlive:
             return ProbeResult(source, dest, sent=1, received=1,
                                loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _always_timeout)
-        monkeypatch.setattr("chatmail_prober.__main__.time.sleep", lambda _: None)
-        monkeypatch.setattr("chatmail_prober.__main__.is_transient_alive_error",
-                            lambda r, e: e is not None and "timeout" in e.lower())
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _always_timeout)
+        monkeypatch.setattr("chatmail_prober.orchestration.time.sleep", lambda _: None)
         relays = ["a.example", "slow.example"]
         args = _make_args(tmp_path, workers=3)
-        alive, dead_set = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
 
         assert "slow.example" not in alive
         assert "slow.example" in dead_set
         assert call_count["slow.example"] == 3  # initial + 2 retries
 
-    def test_no_retry_when_all_alive(self, tmp_path, monkeypatch, _fresh_metrics):
+    def test_no_retry_when_all_alive(self, tmp_path, monkeypatch, fresh_metrics):
         """No retry logic triggered when all relays pass first time."""
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _fake_probe)
         relays = ["a.example", "b.example"]
         args = _make_args(tmp_path, workers=3)
-        alive, dead_set = check_relays_alive(relays, args)
+        alive, dead_set = check_relays_alive(relays, args, Path(args.cache_dir))
 
         assert alive == relays
-        assert dead_set == set()
+        assert dead_set == {}
 
-    def test_previously_dead_skips_retry(self, tmp_path, monkeypatch, _fresh_metrics):
+    def test_previously_dead_skips_retry(self, tmp_path, monkeypatch, fresh_metrics):
         """Relays in previously_dead are not retried even if transient."""
         call_count = {}
 
@@ -392,29 +353,27 @@ class TestCheckRelaysAlive:
             return ProbeResult(source, dest, sent=1, received=1,
                                loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _always_timeout)
-        monkeypatch.setattr("chatmail_prober.__main__.time.sleep", lambda _: None)
-        monkeypatch.setattr("chatmail_prober.__main__.is_transient_alive_error",
-                            lambda r, e: e is not None and "timeout" in e.lower())
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _always_timeout)
+        monkeypatch.setattr("chatmail_prober.orchestration.time.sleep", lambda _: None)
         relays = ["a.example", "known.dead"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(
-            relays, args, previously_dead={"known.dead"})
+            relays, args, Path(args.cache_dir), previously_dead={"known.dead": "timeout"})
 
         assert "known.dead" not in alive
-        assert "known.dead" in dead_set
+        assert "known.dead" in dead_set  # dict membership check works on keys
         assert call_count["known.dead"] == 1  # initial only, no retries
 
-    def test_previously_dead_recovery_detected(self, tmp_path, monkeypatch, _fresh_metrics):
+    def test_previously_dead_recovery_detected(self, tmp_path, monkeypatch, fresh_metrics):
         """A previously-dead relay that now succeeds is included."""
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _fake_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _fake_probe)
         relays = ["a.example", "recovered.example"]
         args = _make_args(tmp_path, workers=3)
         alive, dead_set = check_relays_alive(
-            relays, args, previously_dead={"recovered.example"})
+            relays, args, Path(args.cache_dir), previously_dead={"recovered.example": "timeout"})
 
         assert "recovered.example" in alive
-        assert dead_set == set()
+        assert dead_set == {}
 
 
 class TestReadExcludeList:
@@ -438,20 +397,20 @@ class TestReadExcludeList:
 
 
 class TestRunRoundExclude:
-    def test_excludes_pairs(self, tmp_path, monkeypatch, _fresh_metrics):
+    def test_excludes_pairs(self, tmp_path, monkeypatch, fresh_metrics):
         probed_pairs = []
 
         def _tracking_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, relay_contexts=None):
             probed_pairs.append((source, dest))
             return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.__main__.run_probe", _tracking_probe)
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _tracking_probe)
         relays = ["a.example", "b.example"]
         args = _make_args(tmp_path, workers=2)
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
         exclude = {("a.example", "b.example")}
         try:
-            run_round(relays, args, executors, _make_worker_pools(args.workers),
+            run_round(relays, args, executors, _make_worker_pools(args.workers), shutdown_event=threading.Event(),
                       exclude=exclude)
         finally:
             for ex in executors:
@@ -460,3 +419,319 @@ class TestRunRoundExclude:
         # 4 pairs minus 1 excluded = 3
         assert len(probed_pairs) == 3
         assert ("a.example", "b.example") not in probed_pairs
+
+
+
+class TestSupprRpcClosedFilter:
+    def _make_record(self, msg):
+        return logging.LogRecord("test", logging.ERROR, "", 0, msg, (), None)
+
+    def test_passes_during_normal_operation(self):
+        f = _SupprRpcClosedFilter(threading.Event())
+        assert f.filter(self._make_record("RPC server closed")) is True
+
+    def test_suppresses_during_shutdown(self):
+        event = threading.Event()
+        event.set()
+        f = _SupprRpcClosedFilter(event)
+        assert f.filter(self._make_record("RPC server closed")) is False
+
+    def test_passes_unrelated_errors_during_shutdown(self):
+        event = threading.Event()
+        event.set()
+        f = _SupprRpcClosedFilter(event)
+        assert f.filter(self._make_record("Some other error")) is True
+
+
+class TestRpcCrashKeywords:
+    """Verify _RPC_CRASH_KEYWORDS matches transport errors but not app errors."""
+
+    @pytest.mark.parametrize("error", [
+        "Failed to setup sender profile on host.abc: JsonRpcError: "
+        "{'code': -1, 'message': 'Could not find DNS resolutions'}",
+        "AUTHENTICATIONFAILED: login failed",
+        "Connection timeout: deadline has elapsed",
+        "Failed to setup sender profile on relay.example: SomeError: details",
+    ])
+    def test_app_errors_do_not_match(self, error):
+        assert not any(kw in error.lower() for kw in _RPC_CRASH_KEYWORDS)
+
+    @pytest.mark.parametrize("error", [
+        "RPC server closed",
+        "rpc process crashed",
+        "BrokenPipeError writing to rpc stdin",
+        "ConnectionResetError: [Errno 104] Connection reset by peer",
+        "EOFError reading from rpc server",
+    ])
+    def test_transport_errors_do_match(self, error):
+        assert any(kw in error.lower() for kw in _RPC_CRASH_KEYWORDS)
+
+
+# -- Tests merged from test_print_flag.py, test_print_metrics.py,
+#    test_optional_relay_file.py --
+
+
+def _run_main_once(tmp_path, extra_flags=()):
+    relay_file = tmp_path / "relays.txt"
+    relay_file.write_text("nine.testrun.org\n")
+    argv = [str(relay_file), "--once"] + list(extra_flags)
+    with patch("chatmail_prober.__main__.check_relays_alive",
+               return_value=(["nine.testrun.org"], set())), \
+         patch("chatmail_prober.__main__.run_round",
+               return_value=(0.1, [])), \
+         patch("chatmail_prober.__main__.render_summary") as mock_render, \
+         patch("chatmail_prober.__main__.print_metrics") as mock_pm, \
+         patch("chatmail_prober.__main__.write_textfile"):
+        main(argv)
+    return mock_render, mock_pm
+
+
+class TestPrintFlag:
+    def test_once_without_print_does_not_render(self, tmp_path):
+        mock_render, _ = _run_main_once(tmp_path)
+        mock_render.assert_not_called()
+
+    def test_once_with_print_renders(self, tmp_path):
+        mock_render, _ = _run_main_once(tmp_path, extra_flags=["--print"])
+        mock_render.assert_called_once()
+
+    def test_once_with_print_metrics_calls_print_metrics(self, tmp_path):
+        _, mock_pm = _run_main_once(tmp_path, extra_flags=["--print-metrics"])
+        mock_pm.assert_called_once()
+
+
+class TestPrintMetrics:
+    def test_flag_defaults_to_false(self):
+        args = parse_args(["r.txt"])
+        assert args.print_metrics is False
+
+    def test_flag_accepted(self):
+        args = parse_args(["r.txt", "--print-metrics"])
+        assert args.print_metrics is True
+
+    def test_writes_to_stdout(self, capsys):
+        print_metrics()
+        assert len(capsys.readouterr().out) > 0
+
+
+class TestOptionalRelayFile:
+    def test_hosts_flag_needs_no_relay_file(self):
+        args = parse_args(["-H", "nine.testrun.org"])
+        assert args.hosts == "nine.testrun.org"
+        assert args.relays == []
+
+    def test_reset_needs_no_relay_file(self):
+        args = parse_args(["--reset", "all"])
+        assert args.reset == ["all"]
+
+    def test_no_relay_source_errors(self, tmp_path):
+        with pytest.raises(SystemExit):
+            main(["--cache-dir", str(tmp_path / "cache")])
+
+    def test_reset_without_relay_file_succeeds(self, tmp_path):
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        with patch("chatmail_prober.__main__.reset_accounts"):
+            with pytest.raises(SystemExit) as exc_info:
+                main(["--reset", "all", "--cache-dir", str(cache)])
+        assert exc_info.value.code in (0, None)
+
+    def test_hosts_without_relay_file_proceeds(self, tmp_path):
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        with patch("chatmail_prober.__main__.check_relays_alive",
+                   return_value=(["nine.testrun.org"], set())), \
+             patch("chatmail_prober.__main__.run_round", return_value=(0.1, [])), \
+             patch("chatmail_prober.__main__.render_summary"), \
+             patch("chatmail_prober.__main__.write_textfile"), \
+             patch("chatmail_prober.__main__.print_metrics"):
+            main(["-H", "nine.testrun.org", "--once",
+                  "--cache-dir", str(cache)])
+
+
+# -- Tests merged from test_main_orchestration.py --
+# These test cross-module integration (orchestration + metrics) and need
+# to clear metrics in-place rather than replacing them, because
+# orchestration.py holds direct import bindings to the real gauge objects.
+
+
+def _orch_args(tmp_path, *, workers=3, timeout=90):
+    return argparse.Namespace(
+        cache_dir=str(tmp_path), workers=workers, timeout=timeout,
+        count=1, ping_interval=0.1, interval=900, once=True, verbose=0, exclude=[],
+    )
+
+
+def _ok(src, dst):
+    return ProbeResult(src, dst, sent=1, received=1, loss=0.0, rtts_ms=[50.0])
+
+
+def _err(src, dst, error):
+    return ProbeResult(src, dst, error=error)
+
+
+@pytest.fixture()
+def clear_metrics():
+    """Clear metric label sets in-place for integration tests."""
+    for metric in [
+        metrics_mod.rtt_median, metrics_mod.rtt_stddev,
+        metrics_mod.rtt_p90, metrics_mod.rtt_p10,
+        metrics_mod.probe_success, metrics_mod.probe_loss_ratio,
+        metrics_mod.account_setup_seconds, metrics_mod.send_errors_total,
+        metrics_mod.relay_status,
+    ]:
+        metric._metrics.clear()
+    yield
+
+
+class TestAliveCheckMetrics:
+    def test_dns_failure_sets_status_minus_six(self, tmp_path, monkeypatch, clear_metrics):
+        dns_error = (
+            "Failed to setup sender profile on host.abc: JsonRpcError: "
+            "{'code': -1, 'message': 'Error: IMAP failed to connect to "
+            "imap.host.abc:993:tls: Could not find DNS resolutions for "
+            "imap.host.abc:993. Check server hostname and your network'}"
+        )
+
+        def _probe(src, dst, count=1, interval=0.1, accounts_dir="",
+                   timeout=10, relay_contexts=None):
+            if src == "host.abc":
+                return _err(src, dst, dns_error)
+            return _ok(src, dst)
+
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
+        args = _orch_args(tmp_path, workers=2)
+        alive, dead = check_relays_alive(["host.abc", "host.good"], args, Path(args.cache_dir))
+
+        assert "host.abc" not in alive
+        assert metrics_mod.relay_status.labels(relay="host.abc")._value.get() == -6.0
+
+    def test_auth_failure_sets_status_minus_three(self, tmp_path, monkeypatch, clear_metrics):
+        auth_error = (
+            "Failed to setup sender profile on hostb.xyz: JsonRpcError: "
+            "{'code': -1, 'message': 'Error: Cannot login as "
+            '"user@hostb.xyz". [AUTHENTICATIONFAILED] Authentication failed.\'}'
+        )
+
+        def _probe(src, dst, count=1, interval=0.1, accounts_dir="",
+                   timeout=10, relay_contexts=None):
+            if src == "hostb.xyz":
+                return _err(src, dst, auth_error)
+            return _ok(src, dst)
+
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
+        args = _orch_args(tmp_path, workers=2)
+        check_relays_alive(["hostb.xyz", "host.good"], args, Path(args.cache_dir))
+
+        assert metrics_mod.relay_status.labels(relay="hostb.xyz")._value.get() == -3.0
+
+    def test_timeout_sets_status_minus_one(self, tmp_path, monkeypatch, clear_metrics):
+        timeout_error = (
+            "Failed to setup sender profile on hostd.xyz: JsonRpcError: "
+            "{'code': -1, 'message': 'Error: IMAP failed to connect to "
+            "hostd.xyz:993:tls: Connection timeout: deadline has elapsed'}"
+        )
+
+        def _probe(src, dst, count=1, interval=0.1, accounts_dir="",
+                   timeout=10, relay_contexts=None):
+            if src == "hostd.xyz":
+                return _err(src, dst, timeout_error)
+            return _ok(src, dst)
+
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
+        args = _orch_args(tmp_path, workers=2)
+        check_relays_alive(["hostd.xyz", "host.good"], args, Path(args.cache_dir))
+
+        assert metrics_mod.relay_status.labels(relay="hostd.xyz")._value.get() == -1.0
+
+    def test_online_relay_sets_status_one(self, tmp_path, monkeypatch, clear_metrics):
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe",
+                            lambda *a, **kw: _ok(a[0], a[1]))
+        args = _orch_args(tmp_path, workers=1)
+        alive, dead = check_relays_alive(["host.good"], args, Path(args.cache_dir))
+
+        assert alive == ["host.good"]
+        assert metrics_mod.relay_status.labels(relay="host.good")._value.get() == 1.0
+
+
+class TestReopenGuard:
+    """Application-level errors must not trigger pool.reopen() in run_round."""
+
+    def _run_with_tracking_pool(self, tmp_path, monkeypatch, error_relay, error_msg):
+        reopen_calls = []
+
+        class _TrackingPool:
+            def open_all(self, relays): pass
+            def contexts(self): return {}
+            def reopen(self, relay): reopen_calls.append(relay)
+            def close(self): pass
+
+        def _probe(src, dst, count=1, interval=0.1, accounts_dir="",
+                   timeout=10, relay_contexts=None):
+            if src == error_relay:
+                return _err(src, dst, error_msg)
+            return _ok(src, dst)
+
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            run_round(
+                [error_relay, "host.good"],
+                _orch_args(tmp_path, workers=1),
+                executors=[executor],
+                worker_pools=[_TrackingPool()],
+                shutdown_event=threading.Event(),
+            )
+        finally:
+            executor.shutdown(wait=False)
+        return reopen_calls
+
+    def test_dns_error_does_not_reopen(self, tmp_path, monkeypatch, clear_metrics):
+        calls = self._run_with_tracking_pool(
+            tmp_path, monkeypatch, "host.abc",
+            "Failed to setup: Could not find DNS resolutions for imap.host.abc:993",
+        )
+        assert calls == []
+
+    def test_timeout_does_not_reopen(self, tmp_path, monkeypatch, clear_metrics):
+        calls = self._run_with_tracking_pool(
+            tmp_path, monkeypatch, "hostc.zzz",
+            "Timeout waiting for user@hostc.zzz to come online",
+        )
+        assert calls == []
+
+
+class TestRunRoundMetrics:
+    def test_mixed_round_updates_metrics(self, tmp_path, monkeypatch, clear_metrics):
+        def _probe(src, dst, count=1, interval=0.1, accounts_dir="",
+                   timeout=10, relay_contexts=None):
+            if src == "bad.example":
+                return _err(src, dst, "connection refused")
+            return _ok(src, dst)
+
+        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _probe)
+
+        class _FakePool:
+            def open_all(self, relays): pass
+            def contexts(self): return {}
+            def reopen(self, relay): pass
+            def close(self): pass
+
+        executors = [ThreadPoolExecutor(max_workers=1), ThreadPoolExecutor(max_workers=1)]
+        try:
+            run_round(
+                ["good.example", "bad.example"],
+                _orch_args(tmp_path, workers=2),
+                executors=executors,
+                worker_pools=[_FakePool(), _FakePool()],
+                shutdown_event=threading.Event(),
+            )
+        finally:
+            for ex in executors:
+                ex.shutdown(wait=False)
+
+        good_lbl = dict(source="good.example", destination="good.example", probe_type="self")
+        assert metrics_mod.probe_success.labels(**good_lbl)._value.get() == 1.0
+
+        bad_lbl = dict(source="bad.example", destination="bad.example", probe_type="self")
+        assert metrics_mod.probe_success.labels(**bad_lbl)._value.get() == 0.0

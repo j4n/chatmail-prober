@@ -5,44 +5,33 @@ round-trip time histograms, counters, and success gauges as Prometheus metrics.
 """
 
 import argparse
-import gc
 import logging
 import os
+import re
 import resource
+import shutil
 import signal
-import subprocess
 import threading
 import time
-from concurrent.futures import (
-    ThreadPoolExecutor,
-    TimeoutError as FuturesTimeoutError,
-    as_completed,
-)
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .metrics import (
-    clear_stale_labels, clear_stale_relay_labels,
-    is_transient_alive_error, last_round_timestamp,
-    relay_status, relay_status_value,
-    round_duration_seconds, update_metrics, verify_relay_status,
+from .cli_summary import render as render_summary
+from .log_config import configure_logging, get_logger
+from .orchestration import (
+    check_relays_alive, kill_stale_rpc_servers, run_round, scan_relays,
 )
-from .output import start_exporter_server, write_textfile
-from .prober import ProbeResult, RelayPool, run_probe
+from .output import print_metrics, start_exporter_server, write_textfile
+from .prober import RelayPool
 
-log = logging.getLogger(__name__)
-_app_log = logging.getLogger("chatmail_prober")
+log = get_logger(__name__)
 
 AUTO_FETCH_URL = "https://chatmail.at/relays"
 
 
 class _SupprRpcClosedFilter(logging.Filter):
-    """Suppress 'RPC server closed' errors during shutdown only.
-
-    During shutdown, the event loop thread may try to read from the closed RPC
-    server and raise an error. This is expected and not actionable, so we filter
-    it out. During normal operation these errors indicate real RPC crashes and
-    should be visible for diagnostics.
-    """
+    """Suppress expected 'RPC server closed' errors during shutdown."""
     def __init__(self, shutdown_event):
         super().__init__()
         self._shutdown_event = shutdown_event
@@ -52,10 +41,6 @@ class _SupprRpcClosedFilter(logging.Filter):
                 and "RPC server closed" in str(record.getMessage())):
             return False  # suppress during shutdown
         return True
-
-
-def _avg_ms(rtts_ms):
-    return sum(rtts_ms) / len(rtts_ms) if rtts_ms else 0.0
 
 
 def read_relay_list(paths):
@@ -95,13 +80,18 @@ def read_exclude_list(path):
     return excludes
 
 
+def _bracket_ipv6(host: str) -> str:
+    """Wrap a bare IPv6 address in square brackets; leave everything else unchanged."""
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
 def fetch_relay_list(url, dest):
     """Fetch relay domains from url, write to dest (one domain per line).
 
     Parses chatmail.at/relays HTML: extracts text from <a class="hilite"> tags.
     """
-    import re
-    import urllib.request
     with urllib.request.urlopen(url, timeout=30) as resp:
         html = resp.read().decode()
     domains = re.findall(r'class="hilite">([^<]+)', html)
@@ -134,7 +124,7 @@ def parse_args(argv=None):
         help="path to write .prom file for node_exporter textfile collector",
     )
     parser.add_argument(
-        "--interval",
+        "-i", "--interval",
         type=int,
         default=900,
         help="seconds between probe rounds (default: 900 = 15min)",
@@ -146,7 +136,7 @@ def parse_args(argv=None):
         help="seconds between relay alive re-checks (default: 86400 = 24h, 0 = every round)",
     )
     parser.add_argument(
-        "--count",
+        "-n", "--count",
         type=int,
         default=5,
         help="number of pings per pair per round (default: 5)",
@@ -158,13 +148,13 @@ def parse_args(argv=None):
         help="seconds between individual pings within a probe (default: 0.1)",
     )
     parser.add_argument(
-        "--timeout",
+        "-t", "--timeout",
         type=int,
         default=90,
         help="per-pair receive timeout in seconds (default: 90)",
     )
     parser.add_argument(
-        "--workers",
+        "-w", "--workers",
         type=int,
         default=5,
         help="max concurrent probe threads (default: 5)",
@@ -175,7 +165,7 @@ def parse_args(argv=None):
         help="base dir for per-pair accounts (default: ~/.cache/chatmail-prober)",
     )
     parser.add_argument(
-        "--once",
+        "-1", "--once",
         action="store_true",
         help="run one probe round then exit (useful for testing)",
     )
@@ -214,351 +204,95 @@ def parse_args(argv=None):
         help='file of pairs to skip, one per line: "src->dst" (# comments allowed)',
     )
     parser.add_argument(
+        "-u", "--unreachable",
+        default=None,
+        metavar="FILE",
+        help=(
+            "file of known-unreachable relays (one per line); these are alive-checked "
+            "each round but excluded from the probe matrix. If one recovers it is "
+            "automatically promoted to the active set for that round."
+        ),
+    )
+    parser.add_argument(
         "--reset",
+        nargs="*",
+        metavar="DOMAIN",
+        default=None,
+        help="reset cached accounts; with no args resets all, with DOMAIN args resets only those domains",
+    )
+    parser.add_argument(
+        "-m", "--print-metrics",
         action="store_true",
-        help="remove all account directories to force fresh account creation",
+        default=False,
+        help="print Prometheus metrics to stdout after --once exits (requires --once)",
     )
-    return parser.parse_args(argv)
-
-
-def scan_relays(relays, args):
-    """Self-probe all relays in parallel, print ranked by avg RTT, then exit."""
-    log.info("Scanning %d relays...", len(relays))
-    cache_dir = Path(args.cache_dir).expanduser()
-
-    results = {}
-    with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
-        futures = {
-            pool.submit(run_probe, r, r, args.count, args.ping_interval,
-                        str(cache_dir / "scan" / r), args.timeout): r
-            for r in relays
-        }
-        for future in as_completed(futures):
-            relay = futures[future]
-            results[relay] = future.result()
-            if results[relay].error:
-                log.info("DEAD %s: %s", relay, results[relay].error)
-            else:
-                log.info("OK   %s (%.0fms)", relay, _avg_ms(results[relay].rtts_ms))
-
-    ranked = sorted(
-        relays,
-        key=lambda r: _avg_ms(results[r].rtts_ms) if results[r].rtts_ms else float("inf"),
+    parser.add_argument(
+        "-p", "--print",
+        dest="print_summary",
+        action="store_true",
+        default=False,
+        help="print tabular summary to stdout after --once exits (requires --once)",
     )
-
-    print("\nScan results (fastest first):\n")
-    print(f"  {'Rank':<5} {'Relay':<40} {'Avg RTT':>10} {'Loss':>8} {'Samples':>8}")
-    print(f"  {'-'*5} {'-'*40} {'-'*10} {'-'*8} {'-'*8}")
-    for i, relay in enumerate(ranked, 1):
-        r = results[relay]
-        if r.error:
-            print(f"  {i:<5} {relay:<40} {'DEAD':>10} {'':>8} {'':>8}")
-        else:
-            marker = " <--" if i <= args.top else ""
-            print(f"  {i:<5} {relay:<40} {_avg_ms(r.rtts_ms):>9.0f}ms {r.loss:>7.1f}% {len(r.rtts_ms):>8}{marker}")
-    print()
-
-
-def _kill_stale_rpc_servers(cache_dir, graceful=True):
-    """Kill orphaned deltachat-rpc-server processes from a previous crash.
-
-    Only targets processes whose command line contains our cache_dir path,
-    so unrelated deltachat instances are not affected.
-
-    When graceful=True (default, used at startup), sends SIGTERM first and
-    waits briefly for a clean shutdown before escalating to SIGKILL.  This
-    lets sqlite close its WAL cleanly.  When graceful=False (used during
-    signal-handler shutdown where speed matters), goes straight to SIGKILL.
-    """
-    cache_str = str(cache_dir)
-    try:
-        result = subprocess.run(
-            ["pgrep", "-f", f"deltachat-rpc-server.*{cache_str}"],
-            capture_output=True, text=True,
+    parser.add_argument(
+        "-H", "--hosts",
+        default=None,
+        metavar="HOST[,HOST...]",
+        help="comma-separated relay list overriding relay file(s); bare IPv6 addresses are auto-bracketed",
+    )
+    args = parser.parse_args(argv)
+    if args.reset is not None and not args.reset:
+        parser.error(
+            "--reset requires at least one DOMAIN or 'all'\n"
+            "  examples: --reset all\n"
+            "            --reset nine.testrun.org mailchat.pl"
         )
-        if result.returncode != 0:
-            return
-        pids = [int(p) for p in result.stdout.strip().split()]
-        if graceful:
-            for pid in pids:
-                log.warning("Sending SIGTERM to stale deltachat-rpc-server (PID %d)", pid)
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    continue
-            time.sleep(2)
-        for pid in pids:
-            try:
-                os.kill(pid, signal.SIGKILL)
-                log.warning("Sent SIGKILL to deltachat-rpc-server (PID %d)", pid)
-            except ProcessLookupError:
-                pass  # already exited from SIGTERM
-    except (FileNotFoundError, ValueError):
-        pass
+    return args
 
 
-def check_relays_alive(relays, args, previously_dead=None):
-    """Run a single self-probe (relay->itself, count=1) for each relay in parallel.
+def reset_accounts(cache_dir: Path, domains: list[str]) -> None:
+    """Remove cached account directories.
 
-    Returns (alive, dead) where alive is the list of relays that succeeded
-    (in original order) and dead is a set of relay domains that failed.
-    Dead relays are logged as warnings and excluded from the matrix.
-
-    Relays that fail with transient errors (timeout, unknown) are retried
-    up to 2 times -- unless they were already in previously_dead, meaning
-    they failed last round too and retrying within the same window is
-    unlikely to help.
+    domains=["all"] wipes all worker-* dirs; specific domains are removed
+    from every worker-* dir and alive-check/.
     """
-    if previously_dead is None:
-        previously_dead = set()
-    cache_dir = Path(args.cache_dir).expanduser()
-
-    with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
-        futures = {
-            pool.submit(run_probe, r, r, 1, args.ping_interval,
-                        str(cache_dir / "alive-check" / r), args.timeout // 2): r
-            for r in relays
-        }
-        dead = {}  # relay -> error string
-        completed = set()
-        actual_workers = min(len(relays), args.workers)
-        batches = -(-len(relays) // actual_workers)  # ceil division
-        deadline = args.timeout * (batches + 1)
-        check_start = time.monotonic()
-        timeout_at = time.time() + deadline
-        log.warning("Starting alive scan of %d relays with %d workers, timeout at %s",
-                     len(relays), actual_workers, time.strftime('%H:%M:%S', time.localtime(timeout_at)))
-        try:
-            for future in as_completed(futures, timeout=deadline):
-                relay = futures[future]
-                completed.add(relay)
-                result = future.result()
-                if result.error:
-                    log.warning("DEAD %s: %s", relay, result.error)
-                    dead[relay] = result.error
-                else:
-                    log.info("OK   %s (%.0fms)", relay, result.rtts_ms[0] if result.rtts_ms else 0)
-                remaining = [r for r in relays if r not in completed and r not in dead]
-                if remaining:
-                    names = ", ".join(remaining[:5])
-                    suffix = "..." if len(remaining) > 5 else ""
-                    log.info("  %d remaining: %s%s", len(remaining), names, suffix)
-        except FuturesTimeoutError:
-            elapsed = time.monotonic() - check_start
-            for future, relay in futures.items():
-                if relay not in completed and relay not in dead:
-                    log.warning("TIMEOUT %s: alive check exceeded %.0fs deadline", relay, elapsed)
-                    dead[relay] = "timeout"
-                    future.cancel()
-
-    # Retry relays that failed with transient errors (timeout, unknown).
-    # Persistent errors (genuine DNS, auth, TLS, connection refused) are
-    # not retried since they won't resolve by waiting.  Relays that were
-    # already dead last round are also skipped -- if they didn't recover
-    # between rounds, retrying within the same window won't help.
-    max_retries = 2
-    retry_delay = 5
-    retryable = {r: err for r, err in dead.items()
-                 if r not in previously_dead
-                 and is_transient_alive_error(r, err)}
-    skipped = {r for r in dead if r in previously_dead
-               and is_transient_alive_error(r, dead[r])}
-    if skipped:
-        log.info("Skipping retries for %d previously-dead relay(s): %s",
-                 len(skipped), ", ".join(skipped))
-    if retryable:
-        log.warning("Retrying %d relay(s) with transient errors: %s",
-                     len(retryable), ", ".join(retryable))
-    for attempt in range(1, max_retries + 1):
-        if not retryable:
-            break
-        time.sleep(retry_delay)
-        log.info("Retry attempt %d/%d for %d relay(s)",
-                 attempt, max_retries, len(retryable))
-        with ThreadPoolExecutor(max_workers=min(len(retryable), args.workers)) as pool:
-            retry_futures = {
-                pool.submit(run_probe, r, r, 1, args.ping_interval,
-                            str(cache_dir / "alive-check" / r),
-                            args.timeout // 2): r
-                for r in retryable
-            }
-            try:
-                for future in as_completed(retry_futures, timeout=args.timeout * 2):
-                    relay = retry_futures[future]
-                    result = future.result()
-                    if result.error:
-                        log.warning("Retry %d/%d DEAD %s: %s",
-                                    attempt, max_retries, relay, result.error)
-                        dead[relay] = result.error
-                    else:
-                        log.warning("Retry %d/%d OK   %s (%.0fms)",
-                                    attempt, max_retries, relay,
-                                    result.rtts_ms[0] if result.rtts_ms else 0)
-                        del dead[relay]
-                        retryable.pop(relay, None)
-            except FuturesTimeoutError:
-                for future, relay in retry_futures.items():
-                    if relay in retryable and relay in dead:
-                        log.warning("Retry %d/%d TIMEOUT %s", attempt, max_retries, relay)
-        # Re-evaluate retryable with updated errors
-        retryable = {r: dead[r] for r in retryable
-                     if r in dead and is_transient_alive_error(r, dead[r])}
-
-    alive = [r for r in relays if r not in dead]
-    dead_set = set(dead)
-    recovered = previously_dead - dead_set
-    if recovered:
-        log.warning("Recovered %d previously-dead relay(s): %s",
-                     len(recovered), ", ".join(recovered))
-    if dead:
-        log.warning("%d relay(s) unreachable, skipping from matrix: %s", len(dead), ", ".join(dead))
-
-    # Update per-relay status metric; remove labels for relays dropped from config
-    clear_stale_relay_labels(relays)
-    for r in relays:
-        relay_status.labels(relay=r).set(verify_relay_status(r, dead.get(r)))
-
-    elapsed = time.monotonic() - check_start
-    log.warning("Completed alive check in %.1fs: %d/%d online", elapsed, len(alive), len(relays))
-
-    return alive, dead_set
-
-
-def run_round(relays, args, executors, worker_pools, shutdown_event=None,
-              textfile=None, exclude=None):
-    """Run one complete probe round across all relay pairs.
-
-    Each worker has its own RelayPool with isolated account directories.
-    Accounts persist across probes within a worker and across rounds, so
-    only the first probe per relay per worker pays account-creation cost.
-
-    If shutdown_event is set during the round, the loop breaks immediately
-    without recording metrics for in-flight probes (which would show spurious
-    errors from killed rpc-server processes).
-    """
-    clear_stale_labels(relays)
-    pairs = [(s, d) for s in relays for d in relays
-             if not exclude or (s, d) not in exclude]
-    log.info("Starting probe round: %d pairs, %d workers", len(pairs), args.workers)
-    round_start = time.time()
-
-    # Ensure all worker pools have contexts for all relays.
-    for pool in worker_pools:
-        pool.open_all(relays)
-
-    # Partition pairs round-robin: pair i goes to worker i % workers
-    worker_pairs = [[] for _ in range(args.workers)]
-    for i, pair in enumerate(pairs):
-        worker_pairs[i % args.workers].append(pair)
-
-    # Capture per-worker relay contexts so we can update them if a relay is reopened
-    worker_relay_contexts = {}
-    all_futures = {}
-    for worker_id, executor in enumerate(executors):
-        relay_contexts = worker_pools[worker_id].contexts()
-        worker_relay_contexts[worker_id] = relay_contexts
-        for src, dst in worker_pairs[worker_id]:
-            try:
-                future = executor.submit(
-                    run_probe, src, dst, args.count, args.ping_interval,
-                    timeout=args.timeout,
-                    relay_contexts=relay_contexts,
-                )
-            except RuntimeError:
-                # Executor was shut down (e.g. by signal handler).
-                break
-            all_futures[future] = (src, dst, worker_id)
-
-    completed = 0
-    failed = 0
-    reopen_count = {}  # relay -> number of reopens this round
-    _reopen_limit = 3
-    for future in as_completed(all_futures):
-        if shutdown_event and shutdown_event.is_set():
-            break
-        completed += 1
-        src, dst, worker_id = all_futures[future]
-        try:
-            result = future.result()
-        except Exception as exc:
-            log.exception("src=%s dst=%s worker_crash", src, dst)
-            result = ProbeResult(src, dst, error=str(exc))
-        update_metrics(result)
-        if completed % 50 == 0:
-            gc.collect()
-            if textfile:
-                write_textfile(textfile)
-        if result.error:
-            failed += 1
-            log.warning(
-                "[%d/%d] src=%s dst=%s error=%s",
-                completed, len(pairs), src, dst, result.error,
-            )
-            # Reopen contexts for relays involved in RPC-level failures
-            # so subsequent probes can recover.
-            _rpc_keywords = ("BrokenPipe", "ConnectionReset",
-                             "EOFError", "dead", "process",
-                             "rpc server closed", "rpc process")
-            if any(kw.lower() in result.error.lower() for kw in _rpc_keywords):
-                pool = worker_pools[worker_id]
-                for relay in (src, dst):
-                    prior = reopen_count.get(relay, 0)
-                    if prior >= _reopen_limit:
-                        log.debug("skipping reopen for %s (already reopened %d times)", relay, prior)
-                        continue
-                    try:
-                        pool.reopen(relay)
-                        reopen_count[relay] = prior + 1
-                        # Update the captured relay_contexts dict so other running probes
-                        # in this worker see the freshly reopened context, not the old closed one.
-                        worker_relay_contexts[worker_id].update(pool.contexts())
-                    except Exception as reopen_err:
-                        log.warning("Failed to reopen %s: %s", relay, reopen_err)
-        else:
-            log.info(
-                "[%d/%d] src=%s dst=%s sent=%d recv=%d avg_ms=%.0f loss=%.1f%%",
-                completed, len(pairs), src, dst, result.sent, result.received,
-                _avg_ms(result.rtts_ms), result.loss,
-            )
-
-    elapsed = time.time() - round_start
-    last_round_timestamp.set(time.time())
-    round_duration_seconds.set(elapsed)
-    success_count = completed - failed
-    success_rate = 100.0 * success_count / completed if completed > 0 else 0.0
-    avg_ms_per_pair = int(elapsed * 1000 / completed) if completed > 0 else 0
-    log.warning("Probe round complete: %d/%d pairs succeeded (%.1f%%), %dms/pair, %.1fs total",
-                 success_count, completed, success_rate, avg_ms_per_pair, elapsed)
-    return elapsed
+    if domains == ["all"]:
+        for child in cache_dir.iterdir():
+            if child.is_dir() and child.name != "alive-check":
+                shutil.rmtree(child)
+                log.info("Reset: removed %s", child)
+    else:
+        subdirs = [
+            child for child in cache_dir.iterdir()
+            if child.is_dir()
+        ]
+        for subdir in subdirs:
+            for domain in domains:
+                target = subdir / domain
+                if target.exists():
+                    shutil.rmtree(target)
+                    log.info("Reset: removed %s", target)
 
 
 def main(argv=None):
     args = parse_args(argv)
 
-    # Root logger stays at WARNING -- prevents deltachat-rpc-client's internal
-    # event logging from flooding the output when -v is used.
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-    # Created early so the log filter can reference it; also used by signal handlers.
+    if args.quiet:
+        app_level = logging.WARNING
+    elif args.verbose >= 1:
+        app_level = logging.DEBUG
+    else:
+        app_level = logging.INFO
+
+    configure_logging(level=app_level)
+
     shutdown_event = threading.Event()
 
     # Suppress harmless "RPC server closed" errors from event loop during shutdown.
     logging.getLogger().addFilter(_SupprRpcClosedFilter(shutdown_event))
 
-    # Our logger defaults to INFO so progress is always visible.
-    # -v: DEBUG on chatmail_prober (verbose process detail)
-    # -vv: DEBUG on chatmail_prober AND root (rpc/deltachat events)
-    if args.quiet:
-        _app_log.setLevel(logging.WARNING)
-    elif args.verbose >= 2:
-        _app_log.setLevel(logging.DEBUG)
+    # -vv also enables root-level DEBUG (rpc/deltachat events)
+    if args.verbose >= 2:
         logging.getLogger().setLevel(logging.DEBUG)
-    elif args.verbose >= 1:
-        _app_log.setLevel(logging.DEBUG)
-    else:
-        _app_log.setLevel(logging.INFO)
 
     # Raise the fd soft limit to the hard limit so large relay matrices
     # don't hit the default 1024 cap when deltachat-rpc-server opens many DBs.
@@ -570,31 +304,39 @@ def main(argv=None):
     except (ValueError, OSError):
         pass
 
-    relay_files = list(args.relays)
-    if args.auto_fetch:
-        fetch_relay_list(AUTO_FETCH_URL, args.auto_fetch)
-        relay_files.append(args.auto_fetch)
-    if not relay_files:
-        raise SystemExit("error: at least one relay list file or --auto-fetch is required")
-    relays = read_relay_list(relay_files)
+    cache_dir = Path(args.cache_dir).expanduser()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.reset is not None:
+        reset_accounts(cache_dir, domains=args.reset)
+        raise SystemExit(0)
+
+    # Load relays.
+    if args.hosts is not None:
+        relays = [_bracket_ipv6(h.strip()) for h in args.hosts.split(",") if h.strip()]
+        if not relays:
+            raise SystemExit("error: --hosts list is empty")
+    else:
+        relay_files = list(args.relays)
+        if args.auto_fetch:
+            fetch_relay_list(AUTO_FETCH_URL, args.auto_fetch)
+            relay_files.append(args.auto_fetch)
+        if not relay_files:
+            raise SystemExit("error: at least one relay list file, --hosts, or --auto-fetch is required")
+        relays = read_relay_list(relay_files)
     log.info("Loaded %d relays: %s", len(relays), ", ".join(relays))
 
+    unreachable_relays: list[str] = []
+    if args.unreachable:
+        unreachable_relays = read_relay_list([args.unreachable])
+        log.info("Loaded %d unreachable relays: %s",
+                 len(unreachable_relays), ", ".join(unreachable_relays))
     exclude = set()
     if args.exclude:
         exclude = read_exclude_list(args.exclude)
 
-    cache_dir = Path(args.cache_dir).expanduser()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    if args.reset:
-        import shutil
-        for child in cache_dir.iterdir():
-            if child.is_dir() and child.name != "alive-check":
-                shutil.rmtree(child)
-                log.info("Reset: removed %s", child)
-
     if args.scan:
-        scan_relays(relays, args)
+        scan_relays(relays, args, cache_dir)
         return
 
     total_pairs = len(relays) ** 2 - len(exclude)
@@ -603,19 +345,13 @@ def main(argv=None):
         total_pairs, args.count, args.interval, args.workers,
     )
 
-    # Clean up orphaned RPC servers and stale locks from previous crashes.
-    _kill_stale_rpc_servers(cache_dir)
+    kill_stale_rpc_servers(cache_dir)
     for lock in cache_dir.rglob("accounts.lock"):
         lock.unlink(missing_ok=True)
         log.debug("Removed stale lock: %s", lock)
 
-    # Executors start empty; populated after alive check. Signal handlers
-    # iterate this list, so an empty list is safe during the alive check.
     executors = []
 
-    # Graceful shutdown: first SIGINT/SIGTERM cancels pending work and kills
-    # rpc-server subprocesses to unblock running probes; second kills immediately.
-    # SIGUSR1 lets the current round finish, then exits cleanly.
     stop_after_round = threading.Event()
     sigint_count = 0
 
@@ -629,13 +365,12 @@ def main(argv=None):
         log.info("Shutting down, killing running probes...")
         for ex in executors:
             ex.shutdown(wait=False, cancel_futures=True)
-        _kill_stale_rpc_servers(Path(args.cache_dir).expanduser(), graceful=False)
-        # Main thread may be stuck in as_completed(); force exit after 5s.
+        kill_stale_rpc_servers(cache_dir, graceful=False)
         threading.Timer(5.0, os._exit, args=(0,)).start()
 
     def _handle_usr1(signum, frame):
         stop_after_round.set()
-        log.warn("SIGUSR1 received -- will exit after current round completes")
+        log.warning("SIGUSR1 received -- will exit after current round completes")
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -643,14 +378,11 @@ def main(argv=None):
 
     # Verbosity cycle: quiet -> normal -> debug -> debug+rpc -> quiet ...
     _verbosity_levels = [
-        # (log_level, root_level, label)
         (logging.WARNING, logging.WARNING, "quiet"),
         (logging.INFO,    logging.WARNING, "normal"),
         (logging.DEBUG,   logging.WARNING, "debug"),
         (logging.DEBUG,   logging.DEBUG,   "debug+rpc"),
     ]
-
-    # Determine starting position in the cycle from startup flags.
     if args.quiet:
         _verbosity_idx = 0
     elif args.verbose >= 2:
@@ -664,16 +396,16 @@ def main(argv=None):
         nonlocal _verbosity_idx
         _verbosity_idx = (_verbosity_idx + 1) % len(_verbosity_levels)
         level, root_level, label = _verbosity_levels[_verbosity_idx]
-        _app_log.setLevel(level)
+        logging.getLogger("chatmail_prober").setLevel(level)
         logging.getLogger().setLevel(root_level)
-        # Log at WARNING so it's visible regardless of current level.
-        _app_log.warning("SIGUSR2: verbosity -> %s", label)
+        log.warning("SIGUSR2: verbosity -> %s", label)
 
     signal.signal(signal.SIGUSR2, _handle_usr2)
 
-    all_relays = relays  # preserve full list for periodic re-checks
-    previously_dead = set()
-    relays, previously_dead = check_relays_alive(all_relays, args)
+    all_relays = relays
+    previously_dead: dict[str, str | None] = {}
+    relays, previously_dead = check_relays_alive(
+        all_relays, args, cache_dir, unreachable_relays=unreachable_relays)
     if not relays:
         raise SystemExit("No reachable relays -- aborting")
     log.info("continuing with %d/%d relays online, starting matrix probe", len(relays), len(all_relays))
@@ -683,19 +415,13 @@ def main(argv=None):
     if args.port:
         start_exporter_server(args.port)
 
-    # Create executors; reused across rounds to keep worker threads warm.
     executors.extend(ThreadPoolExecutor(max_workers=1) for _ in range(args.workers))
-
-    # Per-worker RelayPools: each worker gets its own account directory so
-    # accounts are reused across probes within the same worker and across rounds.
     worker_pools = [RelayPool(cache_dir / f"worker-{i}") for i in range(args.workers)]
 
     try:
         while not shutdown_event.is_set():
-            # Periodically re-check which relays are alive
             interval = args.alive_check_interval
             if interval == 0 or time.monotonic() - last_alive_check >= interval:
-                # Re-fetch relay list from URL if --auto-fetch is configured
                 if args.auto_fetch:
                     try:
                         fetch_relay_list(AUTO_FETCH_URL, args.auto_fetch)
@@ -711,18 +437,27 @@ def main(argv=None):
                     except Exception as e:
                         log.warning("Failed to refresh relay list: %s", e)
                 relays, previously_dead = check_relays_alive(
-                    all_relays, args, previously_dead=previously_dead)
+                    all_relays, args, cache_dir, previously_dead=previously_dead,
+                    unreachable_relays=unreachable_relays)
                 last_alive_check = time.monotonic()
                 log.info("continuing with %d/%d relays online, next check in %ds", len(relays), len(all_relays), interval)
 
-            elapsed = run_round(relays, args, executors, worker_pools,
-                                shutdown_event,
-                                textfile=args.textfile, exclude=exclude)
+            elapsed, round_results = run_round(
+                relays, args, executors, worker_pools,
+                shutdown_event,
+                textfile=args.textfile, exclude=exclude,
+            )
 
             if args.textfile:
                 write_textfile(args.textfile)
 
             if args.once or stop_after_round.is_set():
+                if args.print_summary:
+                    render_summary(
+                        round_results, relays, previously_dead, elapsed_s=elapsed
+                    )
+                if args.print_metrics:
+                    print_metrics()
                 break
 
             remaining = max(0, args.interval - elapsed)
@@ -733,7 +468,6 @@ def main(argv=None):
                 )
             else:
                 log.info("Sleeping %.0fs until next round", remaining)
-                # Sleep via Event.wait so signal handler can wake us immediately.
                 shutdown_event.wait(timeout=remaining)
     finally:
         if args.textfile:
@@ -744,8 +478,6 @@ def main(argv=None):
         for ex in executors:
             ex.shutdown(wait=not shutdown_event.is_set(), cancel_futures=True)
         if shutdown_event.is_set():
-            # Worker threads may be stuck on I/O with killed rpc-servers.
-            # os._exit bypasses atexit thread-join and lets the OS reap zombies.
             os._exit(0)
 
 

@@ -29,50 +29,6 @@ round-trips and exports RTT histograms, loss ratios, and timing metrics.
 
 ## 1. System Overview
 
-```mermaid
-graph LR
-    subgraph Relays["Chatmail Relays (N domains)"]
-        R1[relay-a.example]
-        R2[relay-b.example]
-        RN[relay-n.example]
-    end
-
-    subgraph Prober["chatmail-prober process"]
-        MAIN["Orchestrator
-            __main__.py"]
-        PROBE["run_probe
-            prober.py"]
-        PING["_perform_direct_ping
-            prober.py"]
-        DCSERVER["deltachat-rpc-server
-            1 per relay per worker"]
-        METRICS["Prometheus Metrics
-            metrics.py"]
-        HTTP["HTTP /metrics
-            port 9740"]
-        TEXTFILE[".prom textfile
-            node_exporter"]
-    end
-
-    subgraph Grafana
-        PROM[Prometheus]
-        DASH[Grafana Dashboards]
-    end
-
-    MAIN -->|"N^2 pairs"| PROBE
-    PROBE --> PING
-    PING --> DCSERVER
-    DCSERVER <-->|SMTP/IMAP| R1
-    DCSERVER <-->|SMTP/IMAP| R2
-    DCSERVER <-->|SMTP/IMAP| RN
-    PROBE -->|ProbeResult| METRICS
-    METRICS --> HTTP
-    METRICS --> TEXTFILE
-    HTTP --> PROM
-    TEXTFILE --> PROM
-    PROM --> DASH
-```
-
 The prober generates **N^2 pairs** (including self-loops A->A for baseline)
 from N relays, distributes them across W worker threads, and repeats every
 `--interval` seconds.
@@ -108,6 +64,10 @@ chatmail-prober/
 ---
 
 ## 3. Component Architecture
+
+The prober generates **N^2 pairs** (including self-loops A->A for baseline)
+from N relays, distributes them across W worker threads, and repeats every
+`--interval` seconds.
 
 ```mermaid
 graph TD
@@ -226,54 +186,6 @@ RTT is computed by the receiver: `(time.time() - float(parts[1])) * 1000` ms.
 
 ## 5. Thread Model
 
-Two workers running concurrently, each with an active Pinger:
-
-```mermaid
-graph TD
-    MT["Main Thread
-        run_round loop
-        signal handlers"]
-
-    subgraph Executors["Worker Executors  (one ThreadPoolExecutor per --workers)"]
-        W0["Worker-0 Thread
-            sequential pairs"]
-        W1["Worker-1 Thread
-            sequential pairs"]
-        WN["..."]
-    end
-
-    MT --> W0 & W1 & WN
-
-    subgraph Probe0["Pinger: relay-A to relay-B  (Worker-0, active)"]
-        ST0["_send_thread
-            daemon
-            sends N pings
-            exits at deadline"]
-        subgraph RPC0["shared RelayContext (1 per relay via RelayPool)"]
-            EV0["events_thread
-                daemon"]
-            RW0["reader_thread
-                writer_thread"]
-        end
-    end
-
-    subgraph Probe1["Pinger: relay-C to relay-D  (Worker-1, active)"]
-        ST1["_send_thread
-            daemon
-            sends N pings
-            exits at deadline"]
-        subgraph RPC1["shared RelayContext (1 per relay via RelayPool)"]
-            EV1["events_thread
-                daemon"]
-            RW1["reader_thread
-                writer_thread"]
-        end
-    end
-
-    W0 --> ST0 & RPC0
-    W1 --> ST1 & RPC1
-```
-
 ### Thread lifetimes
 
 | Thread | Created by | Lifetime | Cleanup |
@@ -293,54 +205,6 @@ occurred when receiver threads blocked on `queue.get()` without a timeout.
 ## 6. Per-Worker Pools and Account Reuse
 
 Each worker thread gets its own RelayPool with an isolated accounts directory.
-Pairs are distributed **round-robin** across W workers so each worker
-processes its pairs sequentially:
-
-```mermaid
-graph LR
-    subgraph Pairs["N^2 = 9 pairs (3 relays)"]
-        direction TB
-        P0["pair 0: A->A"]
-        P1["pair 1: A->B"]
-        P2["pair 2: A->C"]
-        P3["pair 3: B->A"]
-        P4["pair 4: B->B"]
-        P5["pair 5: B->C"]
-        P6["pair 6: C->A"]
-        P7["pair 7: C->B"]
-        P8["pair 8: C->C"]
-    end
-
-    subgraph W0["Worker-0"]
-        P0 --> P3 --> P6
-    end
-    subgraph W1["Worker-1"]
-        P1 --> P4 --> P7
-    end
-    subgraph W2["Worker-2"]
-        P2 --> P5 --> P8
-    end
-
-    subgraph Pool0["Worker-0 RelayPool"]
-        CA0["RelayContext A"]
-        CB0["RelayContext B"]
-        CC0["RelayContext C"]
-    end
-    subgraph Pool1["Worker-1 RelayPool"]
-        CA1["RelayContext A"]
-        CB1["RelayContext B"]
-        CC1["RelayContext C"]
-    end
-    subgraph Pool2["Worker-2 RelayPool"]
-        CA2["RelayContext A"]
-        CB2["RelayContext B"]
-        CC2["RelayContext C"]
-    end
-
-    W0 -.-> Pool0
-    W1 -.-> Pool1
-    W2 -.-> Pool2
-```
 
 ### Account reuse
 
@@ -375,65 +239,6 @@ subprocesses and accounts directories (open, close, reopen on RPC crash).
 ---
 
 ## 7. Metrics Pipeline
-
-```mermaid
-flowchart LR
-    PR["ProbeResult
-        src, dst
-        rtts_ms list
-        loss
-        error"]
-
-    subgraph update_metrics
-        direction TB
-        CHK{error?}
-        ERR["increment send_errors_total
-            set probe_success=0
-            set loss_ratio=1.0"]
-        OK["compute median/p10/p90/stddev
-            set probe_success=1 if loss==0
-            set loss_ratio
-            set account_setup_seconds"]
-    end
-
-    subgraph CMPING_REGISTRY["CMPING_REGISTRY (custom)"]
-        M1[cmping_rtt_median_seconds]
-        M2[cmping_rtt_stddev_seconds]
-        M3[cmping_rtt_p90_seconds]
-        M4[cmping_rtt_p10_seconds]
-        M5[cmping_probe_success]
-        M6[cmping_probe_loss_ratio]
-        M7[cmping_send_errors_total]
-        M8[cmping_account_setup_seconds]
-        M9[cmping_relay_status]
-    end
-
-    ALC["check_relays_alive()
-        set integer status per relay
-        1=online, negative=error"]
-
-    PR --> CHK
-    CHK -->|yes| ERR
-    CHK -->|no| OK
-    ALC --> M9
-    ERR --> M5
-    ERR --> M6
-    ERR --> M7
-    ERR -->|"set NaN"| M1
-    ERR -->|"set NaN"| M2
-    ERR -->|"set NaN"| M3
-    ERR -->|"set NaN"| M4
-    OK --> M1
-    OK --> M2
-    OK --> M3
-    OK --> M4
-    OK --> M5
-    OK --> M6
-    OK --> M8
-
-    M1 & M2 & M3 & M4 & M5 & M6 & M7 & M8 & M9 -->|"text/plain"| HTTP[":9740/metrics"]
-    M1 & M2 & M3 & M4 & M5 & M6 & M7 & M8 & M9 -->|"atomic write"| TEXTFILE[".prom file"]
-```
 
 ### Labels
 
@@ -522,94 +327,6 @@ quiet (WARNING only) -> normal (INFO) -> debug (DEBUG) -> debug+rpc (DEBUG for a
 The direct-ping logic in `prober.py` is vendored from cmping and simplified
 for the prober's single-receiver, 1:1 chat use case.
 
-```mermaid
-classDiagram
-    class _perform_direct_ping {
-        +relay_contexts: dict
-        +source: str
-        +dest: str
-        +count: int
-        +interval: float
-        +timeout: float
-        ---
-        Gets accounts from makers
-        Waits for online
-        Creates Pinger
-        Consumes receive()
-        Returns Pinger with results
-    }
-
-    class RelayContext {
-        +rpc: Rpc
-        +dc: DeltaChat
-        +maker: AccountMaker
-    }
-
-    class AccountMaker {
-        +dc: DeltaChat
-        +get_relay_account(domain, exclude) (Account, bool)
-        +wait_account_online(account, timeout)
-        +wait_all_online(timeout)
-    }
-
-    class Pinger {
-        +sent: int
-        +received: int
-        +loss: float
-        +results: list
-        +account_setup_time: float
-        +message_time: float
-        +deadline: float
-        ---
-        +send_pings() thread
-        +receive() generator
-    }
-
-    class Rpc {
-        +process: Popen
-        +event_queues: dict
-        +start()
-        +close()
-        +get_queue(account_id) Queue
-    }
-
-    _perform_direct_ping --> RelayContext : uses from pool
-    RelayContext --> AccountMaker
-    RelayContext --> Rpc
-    _perform_direct_ping --> Pinger : creates for message phase
-    Pinger --> Rpc : get_queue() for inline receive loop
-```
-
-### _perform_direct_ping phases
-
-```mermaid
-flowchart TD
-    A[_perform_direct_ping called] --> B
-
-    subgraph B["Phase 1: Account Setup"]
-        B1["get_relay_account per relay
-            returns (account, was_online)"]
-        B2["wait_account_online per account
-            skip if already online"]
-        B1 --> B2
-    end
-
-    B --> D
-
-    subgraph D["Phase 2: Ping/Pong"]
-        D1["Pinger(sender, receiver, count, interval)
-            creates 1:1 chat
-            starts _send_thread"]
-        D2["Pinger.receive()
-            inline event loop on receiver queue
-            yields (seq, ms_duration)"]
-        D3["_send_thread.join(timeout=2s)"]
-        D1 --> D2 --> D3
-    end
-
-    D --> F[return Pinger]
-```
-
 ---
 
 ## 10. Grafana Dashboards
@@ -649,25 +366,28 @@ chatmail-prober [relays_file ...] [options]
 | Flag | Default | Description |
 |---|---|---|
 | `relays` | (optional) | One or more relay list files; merged and deduplicated |
+| `-H, --hosts LIST` | `None` | Comma-separated relay list overriding relay file(s) |
 | `--auto-fetch PATH` | `None` | Fetch relay list from upstream URL, write to PATH, add to sources |
 | `--port` | `0` | HTTP /metrics listen port (0 = disabled) |
 | `--textfile` | `None` | Path for node_exporter textfile .prom output |
-| `--interval` | `900` | Seconds between probe rounds |
-| `--count` | `5` | Pings per pair per round |
+| `-i, --interval` | `900` | Seconds between probe rounds |
+| `-n, --count` | `5` | Pings per pair per round |
 | `--ping-interval` | `0.1` | Seconds between individual pings within a probe |
-| `--timeout` | `90` | Per-pair receive timeout in seconds |
-| `--workers` | `5` | Concurrent worker threads |
+| `-t, --timeout` | `90` | Per-pair receive timeout in seconds |
+| `-w, --workers` | `5` | Concurrent worker threads |
 | `--cache-dir` | `~/.cache/chatmail-prober` | Root for per-worker account dirs |
-| `--reset` | false | Remove all account dirs, force fresh account creation |
+| `--reset [DOMAIN...]` | `None` | Reset cached accounts; "all" resets all, DOMAIN args reset only those |
 | `--exclude PATH` | `None` | File of pairs to skip: `src->dst` per line |
-| `--once` | false | Run one round then exit (useful with --textfile in cron) |
+| `-1, --once` | false | Run one round then exit (useful with --textfile in cron) |
+| `-p, --print` | false | Print tabular summary to stdout after --once exits |
+| `-m, --print-metrics` | false | Print Prometheus metrics to stdout after --once exits |
 | `--scan` | false | Self-probe all relays in parallel, print ranked by RTT, exit |
 | `--top N` | `10` | Relays to highlight in --scan output |
 | `-v` | 0 | Debug logging (-vv debug+rpc/deltachat events) |
-| `-q` | false | Quiet: suppress progress, show only warnings/errors |
+| `-q, --quiet` | false | Quiet: suppress progress, show only warnings/errors |
 
-At least one of `relays` or `--auto-fetch` must be provided.  When both are
-given, domains from all sources are merged and deduplicated.  The default
+At least one of `relays`, `--hosts`, or `--auto-fetch` must be provided. When multiple are
+given, domains from all sources are merged and deduplicated. The default
 fetch URL is `https://chatmail.at/relays` (parses `<a class="hilite">` entries).
 
 ### Relay list format
@@ -759,45 +479,13 @@ The round time is roughly `ceil(N^2 / workers) * avg_probe_time`.
 
 **Symptom**: A relay is down but metrics still show last round's values.
 
-**Handling**: The pre-flight `check_relays_alive()` applies a multi-stage
-classification to avoid both false negatives and wasted retries:
+**Handling**: The pre-flight `check_relays_alive()` classifies errors and
+applies retry logic:
 
-```
-check_relays_alive(relays, args, previously_dead)
-    |
-    |  if --auto-fetch: re-fetch relay list from chatmail.at/relays
-    |
-    v
-[Probe all N relays in parallel, count=1, timeout/2]
-    |
-    v
-For each result:
-    |
-    +-- OK --------> include in matrix
-    |                 (if was in previously_dead: log "recovered")
-    |
-    +-- ERROR -----> classify via verify_relay_status()
-                       |
-                       +-- persistent (-3 auth, -4 tls,
-                       |   -5 refused, -6 genuine dns) --------> EXCLUDE
-                       |
-                       +-- transient (-1 timeout, 0 unknown)
-                           AND in previously_dead? ------------> EXCLUDE
-                           |                         (skip retry, already known dead;
-                           |                          initial probe detects recovery)
-                           |
-                           +-- transient, newly failing -------> RETRY
-                                                                   |
-                                                           [wait 5s, probe again]
-                                                           [up to 2 retries]
-                                                                   |
-                                                               +-- OK --> include
-                                                               +-- dead --> EXCLUDE
-
-Return (alive_list, dead_set)
-                       ^
-                       stored as previously_dead for next round
-```
+- Persistent errors (auth, TLS, connection refused, genuine DNS) -> exclude immediately
+- Transient errors (timeout, unknown, reclassified DNS) on new failures -> retry up to 2 times
+- Transient errors on previously-dead relays -> skip retry (initial probe detects recovery)
+- All relays get a fresh probe each round so recovery is detected within one cycle
 
 The transient/persistent classification uses `is_transient_alive_error()`
 which calls `verify_relay_status()` to distinguish false DNS errors

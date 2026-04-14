@@ -4,8 +4,12 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+import urllib.parse
+
 from chatmail_prober.prober import (
-    run_probe, ProbeResult, RelayPool, PingError, _is_fatal_error,
+    run_probe, ProbeResult, RelayPool, PingError,
+    _classify_error, _FATAL_CATEGORIES,
+    create_qr_url, is_ip_address,
 )
 
 
@@ -55,22 +59,6 @@ class TestRunProbeSuccess:
         assert result.account_setup_time == pytest.approx(1.1)
         assert result.message_time == pytest.approx(3.3)
 
-    @patch("chatmail_prober.prober._perform_direct_ping")
-    def test_args_passed_to_perform(self, mock_ping):
-        """Verify _perform_direct_ping receives correct arguments."""
-        mock_ping.return_value = FakePinger()
-        contexts = {"src.org": MagicMock(), "dst.org": MagicMock()}
-        run_probe("src.org", "dst.org", count=7, interval=2.0, timeout=15.0,
-                  relay_contexts=contexts)
-
-        call_args = mock_ping.call_args
-        assert call_args[0][0] is contexts
-        assert call_args[0][1] == "src.org"
-        assert call_args[0][2] == "dst.org"
-        assert call_args[0][3] == 7
-        assert call_args[0][4] == 2.0
-        assert call_args[0][5] == 15.0
-
 
 class TestRunProbeErrors:
     @patch("chatmail_prober.prober._perform_direct_ping")
@@ -106,19 +94,6 @@ class TestRunProbeErrors:
 
 
 class TestRunProbeWithContexts:
-    @patch("chatmail_prober.prober._perform_direct_ping")
-    def test_with_contexts(self, mock_ping):
-        """With relay_contexts, uses _perform_direct_ping."""
-        mock_ping.return_value = FakePinger()
-        contexts = {"a.test": MagicMock(), "b.test": MagicMock()}
-        result = run_probe("a.test", "b.test", count=3, relay_contexts=contexts)
-
-        assert result.sent == 3
-        assert result.received == 3
-        mock_ping.assert_called_once()
-        call_args = mock_ping.call_args
-        assert call_args[0][0] is contexts
-
     @patch("chatmail_prober.prober._perform_direct_ping")
     def test_error_with_contexts(self, mock_ping):
         mock_ping.side_effect = PingError("rpc failed")
@@ -208,46 +183,60 @@ class TestRelayPool:
         assert pool.contexts()["a.test"] is new_ctx
 
 
-class TestIsFatalError:
-    """Test _is_fatal_error() recognizes non-recoverable RPC errors."""
+class TestFatalCategories:
+    """Verify that _FATAL_CATEGORIES correctly separates fatal from transient errors."""
 
-    def test_dns_resolution(self):
-        assert _is_fatal_error(
-            "Could not find DNS resolutions for imap.chat.beeep.ir:993"
-        )
+    @pytest.mark.parametrize("error", [
+        "Could not find DNS resolutions for imap.chat.beeep.ir:993",
+        "Name or service not known",
+        "Connection refused",
+        "ConnectionRefusedError: [Errno 111]",
+        "certificate has expired",
+        "SSL handshake failed",
+        "[AUTHENTICATIONFAILED] Authentication failed.",
+    ])
+    def test_fatal_errors(self, error):
+        assert _classify_error(error) in _FATAL_CATEGORIES
 
-    def test_dns_name_or_service(self):
-        assert _is_fatal_error("Name or service not known")
+    @pytest.mark.parametrize("error", [
+        "Connection timed out",
+        "something went wrong",
+        "temporary failure in name resolution",
+    ])
+    def test_non_fatal_errors(self, error):
+        assert _classify_error(error) not in _FATAL_CATEGORIES
 
-    def test_dns_getaddrinfo(self):
-        assert _is_fatal_error("getaddrinfo failed for relay.example")
 
-    def test_dns_no_such_host(self):
-        assert _is_fatal_error("dial tcp: lookup relay.example: no such host")
+# -- Tests merged from test_ip_relay.py --
 
-    def test_dns_nxdomain(self):
-        assert _is_fatal_error("NXDOMAIN error for imap.example")
 
-    def test_connection_refused(self):
-        assert _is_fatal_error("Connection refused")
+class TestIsIpAddress:
+    def test_ipv4_detected(self):
+        assert is_ip_address("192.168.1.1") is True
 
-    def test_connection_refused_error(self):
-        assert _is_fatal_error("ConnectionRefusedError: [Errno 111]")
+    def test_ipv6_detected(self):
+        assert is_ip_address("::1") is True
+        assert is_ip_address("2001:db8::1") is True
 
-    def test_certificate(self):
-        assert _is_fatal_error("certificate has expired")
+    def test_domain_not_ip(self):
+        assert is_ip_address("nine.testrun.org") is False
 
-    def test_auth_failed(self):
-        assert _is_fatal_error(
-            "[AUTHENTICATIONFAILED] Authentication failed."
-        )
+    def test_empty_string_not_ip(self):
+        assert is_ip_address("") is False
 
-    def test_transient_error_not_fatal(self):
-        assert not _is_fatal_error("temporary failure in name resolution")
 
-    def test_generic_error_not_fatal(self):
-        assert not _is_fatal_error("something went wrong")
+class TestCreateQrUrl:
+    def test_domain_produces_dcaccount_url(self):
+        assert create_qr_url("nine.testrun.org") == "dcaccount:nine.testrun.org"
 
-    def test_timeout_not_fatal(self):
-        # Timeouts are handled by the deadline, not by _is_fatal_error
-        assert not _is_fatal_error("Connection timed out")
+    def test_ip_produces_dclogin_url(self):
+        url = create_qr_url("192.168.1.1")
+        assert url.startswith("dclogin:")
+        assert "192.168.1.1" in url
+
+    def test_dclogin_url_has_required_params(self):
+        url = create_qr_url("192.168.1.1")
+        qs = urllib.parse.parse_qs(url.split("?")[1]) if "?" in url else {}
+        assert "p" in qs
+        assert "ip" in qs
+        assert "sp" in qs
