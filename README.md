@@ -130,19 +130,25 @@ probes: `get_relay_account()` returns an already-online account when one is
 available, skipping the setup wait. With W workers and N relays there are up
 to W*N account directories and W*N rpc-server processes.
 
+Account creation is limited to 3 per domain per pool to prevent silent
+accumulation on the relay servers. When the limit is reached, probes fail
+with a clear error instead of creating more accounts.
+
 ### Pre-flight alive check and --scan
 
 Before starting the matrix, chatmail-prober runs a single self-probe on each relay in
-parallel. When `--auto-fetch` is configured, the relay list is re-fetched from the
-upstream URL before each periodic alive check so new relays are picked up and removed
-ones are dropped automatically. Relays that fail with transient errors (timeout,
-unknown) are retried up to 2 times with a 5-second delay before being excluded.
-Relays that were already dead in the previous round skip retries (they still get the
-initial probe so recovery is detected). Persistent errors (genuine DNS failure, auth,
-TLS, connection refused) are not retried. Dead relays are excluded with a warning
-rather than failing the whole run. This means a TLS outage on one relay does not
-invalidate an entire round. Alive checks use half the normal `--timeout` per probe
-since a self-probe is lighter than a cross-relay pair.
+parallel using a dedicated alive-check RelayPool. This pool persists across rounds,
+so accounts created during the first alive check are reused on subsequent checks
+rather than creating new ones each time. When `--auto-fetch` is configured, the relay
+list is re-fetched from the upstream URL before each periodic alive check so new
+relays are picked up and removed ones are dropped automatically. Relays that fail
+with transient errors (timeout, unknown) are retried up to 2 times with a 5-second
+delay before being excluded. Relays that were already dead in the previous round skip
+retries (they still get the initial probe so recovery is detected). Persistent errors
+(genuine DNS failure, auth, TLS, connection refused) are not retried. Dead relays are
+excluded with a warning rather than failing the whole run. This means a TLS outage on
+one relay does not invalidate an entire round. Alive checks use half the normal
+`--timeout` per probe since a self-probe is lighter than a cross-relay pair.
 
 This can be invoked standalone with `--scan` to print a list ranked by RTT.
 

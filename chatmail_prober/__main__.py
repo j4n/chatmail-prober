@@ -403,9 +403,11 @@ def main(argv=None):
     signal.signal(signal.SIGUSR2, _handle_usr2)
 
     all_relays = relays
+    alive_pool = RelayPool(cache_dir / "alive-check")
     previously_dead: dict[str, str | None] = {}
     relays, previously_dead = check_relays_alive(
-        all_relays, args, cache_dir, unreachable_relays=unreachable_relays)
+        all_relays, args, cache_dir, unreachable_relays=unreachable_relays,
+        alive_pool=alive_pool)
     if not relays:
         raise SystemExit("No reachable relays -- aborting")
     log.info("continuing with %d/%d relays online, starting matrix probe", len(relays), len(all_relays))
@@ -438,7 +440,8 @@ def main(argv=None):
                         log.warning("Failed to refresh relay list: %s", e)
                 relays, previously_dead = check_relays_alive(
                     all_relays, args, cache_dir, previously_dead=previously_dead,
-                    unreachable_relays=unreachable_relays)
+                    unreachable_relays=unreachable_relays,
+                    alive_pool=alive_pool)
                 last_alive_check = time.monotonic()
                 log.info("continuing with %d/%d relays online, next check in %ds", len(relays), len(all_relays), interval)
 
@@ -473,6 +476,7 @@ def main(argv=None):
         if args.textfile:
             log.info("Writing final metrics")
             write_textfile(args.textfile)
+        alive_pool.close()
         for pool in worker_pools:
             pool.close()
         for ex in executors:

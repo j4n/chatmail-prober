@@ -16,6 +16,7 @@ import random
 import statistics
 import shutil
 import string
+import subprocess
 import sys
 import threading
 import time
@@ -115,7 +116,7 @@ class RelayContext:
         return self
 
     def close(self) -> None:
-        """Shut down the RPC server."""
+        """Shut down the RPC server, ensuring the child process is always killed."""
         rpc = self.rpc
         if rpc is not None:
             self.rpc = None
@@ -125,6 +126,28 @@ class RelayContext:
                 rpc.__exit__(None, None, None)
             except Exception as e:
                 log.warning("cleanup failed for %s: %s", self.relay, e)
+            finally:
+                self._ensure_process_dead(rpc)
+
+    @staticmethod
+    def _ensure_process_dead(rpc):
+        """Kill the rpc-server child process if it's still running.
+
+        Rpc.close() can hang or fail (e.g. events_thread.join() blocks,
+        stop_io_for_all_accounts RPC errors out), leaving the subprocess
+        alive.  This is the safety net.
+        """
+        proc = getattr(rpc, "process", None)
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
+        except Exception:
+            pass
 
     def __enter__(self) -> RelayContext:
         return self.open()
@@ -169,6 +192,8 @@ class AccountMaker:
         account.start_io()
         self.online.append(account)
 
+    _MAX_ACCOUNTS_PER_DOMAIN = 3
+
     def get_relay_account(self, domain, exclude=None):
         """Get or create an account for domain.
 
@@ -183,28 +208,40 @@ class AccountMaker:
                 continue
             addr = account.get_config("configured_addr")
             if addr and addr.split("@")[1] == domain:
+                log.info("account_reused", relay=domain, addr=addr)
                 return account, True
 
-        # New account needed — emit setup phase events.
+        # New account needed -- emit setup phase events.
         log.debug("setup_start", relay=domain)
         setup_start = time.time()
 
         # Find a configured-but-offline account, or create a new one.
         found = None
+        domain_count = 0
         for account in self.dc.get_all_accounts():
             if account in _exclude:
                 continue
             addr = account.get_config("configured_addr")
             if addr is not None:
                 addr_domain = addr.split("@")[1] if "@" in addr else None
-                if addr_domain == domain and account not in self.online:
-                    found = account
-                    break
+                if addr_domain == domain:
+                    domain_count += 1
+                    if account not in self.online and found is None:
+                        found = account
 
-        if found is None:
+        if found is not None:
+            addr = found.get_config("configured_addr") or "unknown"
+            log.info("account_resumed", relay=domain, addr=addr)
+        else:
+            if domain_count >= self._MAX_ACCOUNTS_PER_DOMAIN:
+                raise PingError(
+                    f"Too many accounts for {domain} ({domain_count}), "
+                    f"refusing to create more (limit {self._MAX_ACCOUNTS_PER_DOMAIN})"
+                )
             found = self.dc.add_account()
             qr_url = create_qr_url(domain)
             found.set_config_from_qr(qr_url)
+            log.warning("account_created", relay=domain, total=domain_count + 1)
 
         self._add_online(found)
         log.debug("setup_done", relay=domain,

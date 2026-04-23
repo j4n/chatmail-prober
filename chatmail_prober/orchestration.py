@@ -72,22 +72,41 @@ def kill_stale_rpc_servers(cache_dir, graceful=True):
 
 
 def check_relays_alive(relays, args, cache_dir, previously_dead=None,
-                       unreachable_relays=None):
+                       unreachable_relays=None, alive_pool=None):
     """Self-probe each relay in parallel; return (alive_list, dead_dict).
 
     Transient failures (timeout, unknown) are retried up to 2 times unless
     the relay was already dead last round.  Relays from unreachable_relays
     are checked but excluded from the alive list unless they recover.
+
+    When alive_pool (a RelayPool) is provided, its shared contexts are reused
+    across rounds instead of creating throwaway accounts each time.
     """
     if previously_dead is None:
         previously_dead = set()
     unreachable_set: set[str] = set(unreachable_relays or [])
     # Include unreachable relays in the alive check so we can detect recovery.
     all_check_relays = list(relays) + [r for r in unreachable_set if r not in relays]
+
+    # Pre-open shared contexts so accounts are reused across rounds.
+    if alive_pool is not None:
+        alive_pool.open_all(all_check_relays)
+        relay_contexts = alive_pool.contexts()
+    else:
+        relay_contexts = None
+
+    def _submit_probe(executor, relay):
+        if relay_contexts is not None:
+            return executor.submit(
+                run_probe, relay, relay, 1, args.ping_interval,
+                timeout=args.timeout // 2, relay_contexts=relay_contexts)
+        return executor.submit(
+            run_probe, relay, relay, 1, args.ping_interval,
+            str(cache_dir / "alive-check" / relay), args.timeout // 2)
+
     with ThreadPoolExecutor(max_workers=min(len(all_check_relays), args.workers)) as pool:
         futures = {
-            pool.submit(run_probe, r, r, 1, args.ping_interval,
-                        str(cache_dir / "alive-check" / r), args.timeout // 2): r
+            _submit_probe(pool, r): r
             for r in all_check_relays
         }
         dead = {}  # relay -> error string
@@ -109,6 +128,14 @@ def check_relays_alive(relays, args, cache_dir, previously_dead=None,
                     if result.error:
                         log.warning("relay_dead", error=result.error)
                         dead[relay] = result.error
+                        if alive_pool is not None and any(
+                            kw in result.error.lower() for kw in _RPC_CRASH_KEYWORDS
+                        ):
+                            try:
+                                alive_pool.reopen(relay)
+                                relay_contexts.update(alive_pool.contexts())
+                            except Exception as e:
+                                log.warning("alive_reopen_failed", relay=relay, error=str(e))
                     else:
                         log.info("relay_ok",
                                  rtt_ms=round(result.rtts_ms[0]) if result.rtts_ms else 0)
@@ -166,9 +193,7 @@ def check_relays_alive(relays, args, cache_dir, previously_dead=None,
                  attempt=attempt, max_retries=max_retries, count=len(retryable))
         with ThreadPoolExecutor(max_workers=min(len(retryable), args.workers)) as pool:
             retry_futures = {
-                pool.submit(run_probe, r, r, 1, args.ping_interval,
-                            str(cache_dir / "alive-check" / r),
-                            args.timeout // 2): r
+                _submit_probe(pool, r): r
                 for r in retryable
             }
             try:

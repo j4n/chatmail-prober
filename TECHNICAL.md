@@ -205,6 +205,8 @@ occurred when receiver threads blocked on `queue.get()` without a timeout.
 ## 6. Per-Worker Pools and Account Reuse
 
 Each worker thread gets its own RelayPool with an isolated accounts directory.
+A separate alive-check RelayPool persists across rounds so alive-check
+accounts are created once and reused, not recreated every cycle.
 
 ### Account reuse
 
@@ -213,6 +215,15 @@ Within a worker, `get_relay_account(domain, exclude)` returns an
 already connected and `wait_account_online()` can be skipped, saving the
 IMAP_INBOX_IDLE wait. The `exclude` parameter prevents the same account
 from being used as both sender and receiver in a self-probe.
+
+Account creation is capped at `_MAX_ACCOUNTS_PER_DOMAIN` (3) per pool.
+If the limit is reached, `get_relay_account()` raises `PingError` instead
+of silently accumulating accounts on the relay. Logging tracks account
+lifecycle at each decision point:
+
+- `account_reused` (info) -- returned an already-online account
+- `account_resumed` (info) -- resumed a configured-but-offline account
+- `account_created` (warning) -- created a new account on the relay
 
 ### Account directory layout
 
@@ -228,13 +239,14 @@ from being used as both sender and receiver in a self-probe.
 │   ├── relay-a.example/
 │   ├── relay-b.example/
 │   └── relay-c.example/
-└── alive-check/             # used only during pre-flight alive check
+└── alive-check/             # persistent pool for pre-flight alive checks
     ├── relay-a.example/
     └── ...
 ```
 
-Each worker's RelayPool manages its own set of `deltachat-rpc-server`
-subprocesses and accounts directories (open, close, reopen on RPC crash).
+Each RelayPool manages its own set of `deltachat-rpc-server` subprocesses
+and account directories (open, close, reopen on RPC crash). The alive-check
+pool uses the same infrastructure as worker pools.
 
 ---
 
@@ -518,22 +530,28 @@ cat /proc/<pid>/status | grep Threads   # should stay near constant
 ### deltachat-rpc-server orphans after crash
 
 **Symptom**: `accounts.lock` still held, next startup fails to acquire lock.
+Or: rpc-server child processes accumulate over time because `Rpc.close()`
+hung or threw an exception.
 
-**Handling**: On startup, `__main__.py` runs:
-```python
-_kill_stale_rpc_servers(cache_dir)   # pgrep -f deltachat-rpc-server.*cache_dir
-for lock in cache_dir.rglob("accounts.lock"):
-    lock.unlink(missing_ok=True)
-```
+**Handling**: Two layers of defense:
+
+1. `RelayContext.close()` calls `_ensure_process_dead()` in a `finally`
+   block after `rpc.__exit__()`. This sends SIGTERM (3s grace), then
+   SIGKILL if needed, ensuring the child is always reaped even when
+   `Rpc.close()` hangs on `events_thread.join()` or `stop_io_for_all_accounts()`.
+
+2. On startup, `__main__.py` runs `kill_stale_rpc_servers(cache_dir)` to
+   clean up any orphans from a previous crash, and removes stale
+   `accounts.lock` files.
 
 ### RPC crash mid-round
 
 **Symptom**: Probes fail with BrokenPipe/ConnectionReset/EOFError errors.
 
-**Handling**: When `run_round()` detects an RPC-level error keyword in a
-probe's error string, it calls `pool.reopen(relay)` to close the dead
-context and start a fresh one. Subsequent probes for that relay use the
-new context.
+**Handling**: When `run_round()` or `check_relays_alive()` detects an
+RPC-level error keyword in a probe's error string, it calls
+`pool.reopen(relay)` to close the dead context and start a fresh one.
+Subsequent probes for that relay use the new context.
 
 ### File descriptor exhaustion
 
