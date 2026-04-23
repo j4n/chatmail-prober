@@ -355,20 +355,27 @@ def scan_relays(relays, args, cache_dir):
     """Self-probe all relays in parallel, print ranked by avg RTT, then exit."""
     log.info("Scanning %d relays...", len(relays))
 
-    results = {}
-    with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
-        futures = {
-            pool.submit(run_probe, r, r, args.count, args.ping_interval,
-                        str(cache_dir / "scan" / r), args.timeout): r
-            for r in relays
-        }
-        for future in as_completed(futures):
-            relay = futures[future]
-            results[relay] = future.result()
-            if results[relay].error:
-                log.info("DEAD %s: %s", relay, results[relay].error)
-            else:
-                log.info("OK   %s (%.0fms)", relay, _avg_ms(results[relay].rtts_ms))
+    scan_pool = RelayPool(cache_dir / "scan")
+    try:
+        scan_pool.open_all(relays)
+        relay_contexts = scan_pool.contexts()
+        results = {}
+        with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
+            futures = {
+                pool.submit(run_probe, r, r, args.count, args.ping_interval,
+                            timeout=args.timeout,
+                            relay_contexts=relay_contexts): r
+                for r in relays
+            }
+            for future in as_completed(futures):
+                relay = futures[future]
+                results[relay] = future.result()
+                if results[relay].error:
+                    log.info("DEAD %s: %s", relay, results[relay].error)
+                else:
+                    log.info("OK   %s (%.0fms)", relay, _avg_ms(results[relay].rtts_ms))
+    finally:
+        scan_pool.close()
 
     ranked = sorted(
         relays,

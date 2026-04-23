@@ -115,28 +115,38 @@ class RelayContext:
         self.maker = AccountMaker(self.dc)
         return self
 
+    _CLOSE_TIMEOUT = 5
+
     def close(self) -> None:
-        """Shut down the RPC server, ensuring the child process is always killed."""
+        """Shut down the RPC server, ensuring the child process is always killed.
+
+        Rpc.close() can hang indefinitely (events_thread.join() with no
+        timeout, blocking RPC calls).  We run it in a daemon thread with
+        a deadline, then unconditionally kill the child process.
+        """
         rpc = self.rpc
         if rpc is not None:
             self.rpc = None
             self.dc = None
             self.maker = None
-            try:
-                rpc.__exit__(None, None, None)
-            except Exception as e:
-                log.warning("cleanup failed for %s: %s", self.relay, e)
-            finally:
-                self._ensure_process_dead(rpc)
+            closer = threading.Thread(
+                target=self._close_rpc, args=(rpc, self.relay), daemon=True)
+            closer.start()
+            closer.join(timeout=self._CLOSE_TIMEOUT)
+            if closer.is_alive():
+                log.warning("close timed out for %s, killing process", self.relay)
+            self._ensure_process_dead(rpc)
+
+    @staticmethod
+    def _close_rpc(rpc, relay):
+        try:
+            rpc.__exit__(None, None, None)
+        except Exception as e:
+            log.warning("cleanup failed for %s: %s", relay, e)
 
     @staticmethod
     def _ensure_process_dead(rpc):
-        """Kill the rpc-server child process if it's still running.
-
-        Rpc.close() can hang or fail (e.g. events_thread.join() blocks,
-        stop_io_for_all_accounts RPC errors out), leaving the subprocess
-        alive.  This is the safety net.
-        """
+        """Kill the rpc-server child process if it is still running."""
         proc = getattr(rpc, "process", None)
         if proc is None or proc.poll() is not None:
             return
@@ -241,6 +251,8 @@ class AccountMaker:
             found = self.dc.add_account()
             qr_url = create_qr_url(domain)
             found.set_config_from_qr(qr_url)
+            from .metrics import account_creations_total
+            account_creations_total.labels(relay=domain).inc()
             log.warning("account_created", relay=domain, total=domain_count + 1)
 
         self._add_online(found)
@@ -454,6 +466,16 @@ class RelayPool:
         ctx.open()
         self._contexts[relay] = ctx
         log.info("pool: reopened context for %s", relay)
+
+    def prune(self, active_relays):
+        """Close and remove contexts for relays no longer in the active set."""
+        active = set(active_relays)
+        stale = [r for r in self._contexts if r not in active]
+        for relay in stale:
+            ctx = self._contexts.pop(relay)
+            with contextlib.suppress(Exception):
+                ctx.close()
+            log.info("pool: pruned context for %s", relay)
 
     def close(self):
         """Close all managed contexts."""

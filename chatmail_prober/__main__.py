@@ -443,6 +443,9 @@ def main(argv=None):
                     unreachable_relays=unreachable_relays,
                     alive_pool=alive_pool)
                 last_alive_check = time.monotonic()
+                alive_pool.prune(all_relays)
+                for pool in worker_pools:
+                    pool.prune(all_relays)
                 log.info("continuing with %d/%d relays online, next check in %ds", len(relays), len(all_relays), interval)
 
             elapsed, round_results = run_round(

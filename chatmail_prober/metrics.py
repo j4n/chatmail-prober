@@ -108,6 +108,13 @@ rounds_total = Counter(
     registry=CMPING_REGISTRY,
 )
 
+account_creations_total = Counter(
+    "cmping_account_creations_total",
+    "Total chatmail accounts created since process start",
+    ["relay"],
+    registry=CMPING_REGISTRY,
+)
+
 relay_status = Gauge(
     "cmping_relay_status",
     (
@@ -213,11 +220,12 @@ def is_transient_alive_error(relay: str | None, error_str: str | None) -> bool:
 
 
 def clear_stale_relay_labels(configured_relays: list[str]) -> None:
-    """Remove relay_status label sets for relays no longer in the configured list."""
+    """Remove per-relay label sets for relays no longer in the configured list."""
     active = set(configured_relays)
-    for (relay,) in list(relay_status._metrics.keys()):
-        if relay not in active:
-            relay_status.remove(relay)
+    for metric in (relay_status, account_creations_total):
+        for (relay,) in list(metric._metrics.keys()):
+            if relay not in active:
+                metric.remove(relay)
 
 
 def update_metrics(result: ProbeResult) -> None:
