@@ -199,6 +199,8 @@ class AccountMaker:
 
     def _add_online(self, account):
         account.set_config("bot", "1")
+        account.set_config("delete_device_after", "3600")
+        account.set_config("delete_server_after", "3600")
         account.start_io()
         self.online.append(account)
 
