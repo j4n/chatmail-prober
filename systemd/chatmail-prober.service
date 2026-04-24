@@ -20,7 +20,8 @@ WorkingDirectory=/opt/chatmail-prober/chatmail-prober
 ExecStart=/opt/chatmail-prober/.local/bin/uv run chatmail-prober \
     --auto-fetch /var/lib/chatmail-prober/relays.txt \
     --textfile /var/tmp/chatmail-prober.prom \
-    --workers 30 \
+    --workers 15 \
+    --timeout 30 \
     --cache-dir /var/lib/chatmail-prober \
     -q
 
