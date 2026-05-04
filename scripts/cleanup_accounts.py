@@ -316,14 +316,15 @@ def main(argv=None):
             print(f"  {r['pool']}/{r['relay']}: {r['count']} accounts, "
                   f"keep={keep_ids}, remove={remove_ids}")
 
+    du_before = _du_sh(cache_dir)
+    print(f"Disk usage: {du_before}")
+
     if not args.apply:
         print(f"\nDry run: would remove {total_excess} excess account(s).")
         print("Re-run with --apply to execute.")
         return 1 if total_excess > 0 else 0
 
-    # Snapshot disk usage before cleanup
-    du_before = _du_sh(cache_dir)
-    print(f"Disk usage before: {du_before}")
+    print(f"Cleaning...")
 
     # Apply cleanup
     cleaned = 0
@@ -389,7 +390,7 @@ def main(argv=None):
     du_after = _du_sh(cache_dir)
     print(f"\nCleaned {cleaned} excess account(s), {errors} error(s).")
     print(f"Vacuumed {vacuumed} surviving DB(s), {vacuum_errors} error(s).")
-    print(f"Disk usage after:  {du_after}")
+    print(f"Disk usage after:  {du_after} (was {du_before})")
     return 1 if (errors or vacuum_errors) > 0 else 0
 
 
