@@ -75,6 +75,26 @@ def _all_account_dirs(cache_dir: Path) -> list[Path]:
     return dirs
 
 
+def _clear_messages(db: Path) -> int:
+    """Delete all rows from message-related tables. Returns rows deleted."""
+    tables = ("msgs", "mime_headers", "imap", "smtp", "smtp_mdns", "smtp_status_updates",
+              "imap_markseen", "imap_send", "imap_sync", "sending_blocklist")
+    deleted = 0
+    try:
+        con = sqlite3.connect(str(db))
+        for table in tables:
+            try:
+                cur = con.execute(f"DELETE FROM {table}")  # noqa: S608
+                deleted += cur.rowcount
+            except sqlite3.OperationalError:
+                pass  # table may not exist in older schema versions
+        con.commit()
+        con.close()
+    except Exception:
+        pass
+    return deleted
+
+
 def _du_sh(path: Path) -> str:
     """Return human-readable disk usage for path (like du -sh)."""
     try:
@@ -262,6 +282,10 @@ def main(argv=None):
                         help="path to chatmail-prober cache directory")
     parser.add_argument("--apply", action="store_true",
                         help="actually remove excess accounts (default: dry-run)")
+    parser.add_argument("--clear-messages", action="store_true",
+                        help="clear message tables from all account DBs (one-shot legacy cleanup; "
+                             "requires --apply; accounts have delete_device_after=3600 so this "
+                             "is not needed after the first run)")
     args = parser.parse_args(argv)
 
     cache_dir = args.cache_dir.resolve()
@@ -326,7 +350,7 @@ def main(argv=None):
     print(f"Blob files:  {total_blobs}")
     print(f"Disk usage:  {du_before}")
 
-    if not excess_entries and not total_blobs:
+    if not excess_entries and not total_blobs and not args.clear_messages:
         print("No cleanup needed.")
         return 0
 
@@ -357,10 +381,16 @@ def main(argv=None):
                       f"keep={keep_ids}, remove={remove_ids}")
 
     if not args.apply:
-        print(f"\nDry run: would remove {total_excess} excess account(s) "
-              f"and {total_blobs} blob file(s).")
+        parts = []
+        if total_excess:
+            parts.append(f"{total_excess} excess account(s)")
+        if total_blobs:
+            parts.append(f"{total_blobs} blob file(s)")
+        if args.clear_messages:
+            parts.append("message tables (--clear-messages)")
+        print(f"\nDry run: would remove {', '.join(parts)}.")
         print("Re-run with --apply to execute.")
-        return 1 if (total_excess or total_blobs) > 0 else 0
+        return 1 if (total_excess or total_blobs or args.clear_messages) > 0 else 0
 
     print("Cleaning...")
 
@@ -421,10 +451,25 @@ def main(argv=None):
             print(f"  vacuum error {db}: {e}", file=sys.stderr)
             vacuum_errors += 1
 
+    msgs_deleted = 0
+    if args.clear_messages:
+        for acct_dir in _all_account_dirs(cache_dir):
+            msgs_deleted += _clear_messages(acct_dir / "dc.db")
+        # Re-VACUUM after clearing message tables to actually reclaim space
+        for acct_dir in _all_account_dirs(cache_dir):
+            try:
+                con = sqlite3.connect(str(acct_dir / "dc.db"))
+                con.execute("VACUUM")
+                con.close()
+            except Exception:
+                pass
+
     du_after = _du_sh(cache_dir)
     print(f"\nCleaned {cleaned} excess account(s), {errors} error(s).")
     print(f"Deleted {blobs_deleted} blob file(s), vacuumed {vacuumed} DB(s)"
           f"{f', {vacuum_errors} vacuum error(s)' if vacuum_errors else ''}.")
+    if args.clear_messages:
+        print(f"Cleared {msgs_deleted} message row(s) from all DBs (re-vacuumed).")
     print(f"Disk usage after:  {du_after} (was {du_before})")
     return 1 if (errors or vacuum_errors) > 0 else 0
 
