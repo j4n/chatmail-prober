@@ -39,6 +39,15 @@ from pathlib import Path
 _MAX_ACCOUNTS_PER_DOMAIN = 3
 
 
+def _du_sh(path: Path) -> str:
+    """Return human-readable disk usage for path (like du -sh)."""
+    try:
+        result = subprocess.run(["du", "-sh", str(path)], capture_output=True, text=True)
+        return result.stdout.split()[0] if result.stdout else "?"
+    except Exception:
+        return "?"
+
+
 def check_rpc_servers(cache_dir: Path) -> list[int]:
     """Return PIDs of deltachat-rpc-server processes using this cache dir."""
     try:
@@ -120,7 +129,7 @@ def get_excess_accounts(accounts: list[dict]) -> list[dict]:
     """Return accounts exceeding _MAX_ACCOUNTS_PER_DOMAIN per domain.
 
     Keeps the newest accounts (highest IDs) per domain, marks oldest as excess.
-    Accounts without a domain are treated as a single "(unknown)" group.
+    Accounts without a domain (unconfigured ghosts) are all excess -- keep 0.
     """
     by_domain: dict[str, list[dict]] = defaultdict(list)
     for a in accounts:
@@ -128,9 +137,10 @@ def get_excess_accounts(accounts: list[dict]) -> list[dict]:
         by_domain[key].append(a)
 
     excess = []
-    for accts in by_domain.values():
+    for domain, accts in by_domain.items():
+        keep = 0 if domain == "(unknown)" else _MAX_ACCOUNTS_PER_DOMAIN
         sorted_accts = sorted(accts, key=lambda a: a["id"], reverse=True)  # newest first
-        excess.extend(sorted_accts[_MAX_ACCOUNTS_PER_DOMAIN:])
+        excess.extend(sorted_accts[keep:])
     return excess
 
 
@@ -289,11 +299,12 @@ def main(argv=None):
             for a in accounts:
                 by_domain[a.get("domain") or "(unknown)"].append(a)
             for domain, accts in sorted(by_domain.items()):
+                keep = 0 if domain == "(unknown)" else _MAX_ACCOUNTS_PER_DOMAIN
                 sorted_accts = sorted(accts, key=lambda a: a["id"], reverse=True)
-                n_excess = max(0, len(sorted_accts) - _MAX_ACCOUNTS_PER_DOMAIN)
+                n_excess = max(0, len(sorted_accts) - keep)
                 if n_excess > 0:
-                    keep_ids = [a["id"] for a in sorted_accts[:_MAX_ACCOUNTS_PER_DOMAIN]]
-                    rm_ids = [a["id"] for a in sorted_accts[_MAX_ACCOUNTS_PER_DOMAIN:]]
+                    keep_ids = [a["id"] for a in sorted_accts[:keep]]
+                    rm_ids = [a["id"] for a in sorted_accts[keep:]]
                     print(f"  {r['pool']}/{domain}: {len(accts)} accounts, "
                           f"keep={keep_ids}, remove={rm_ids}")
         else:
@@ -310,9 +321,14 @@ def main(argv=None):
         print("Re-run with --apply to execute.")
         return 1 if total_excess > 0 else 0
 
+    # Snapshot disk usage before cleanup
+    du_before = _du_sh(cache_dir)
+    print(f"Disk usage before: {du_before}")
+
     # Apply cleanup
     cleaned = 0
     errors = 0
+    all_kept_dirs: list[Path] = []
     for r in excess_entries:
         accounts = r["accounts"]
         pool_dir = r["path"].parent
@@ -351,8 +367,30 @@ def main(argv=None):
             print(f"  error rewriting {r['path']}: {e}", file=sys.stderr)
             errors += 1
 
+        for acct in keep_accounts:
+            all_kept_dirs.append(pool_dir / acct["dir"])
+
+    # VACUUM surviving account DBs to reclaim fragmented space
+    vacuumed = 0
+    vacuum_errors = 0
+    for acct_dir in all_kept_dirs:
+        db = acct_dir / "dc.db"
+        if not db.exists():
+            continue
+        try:
+            con = sqlite3.connect(str(db))
+            con.execute("VACUUM")
+            con.close()
+            vacuumed += 1
+        except Exception as e:
+            print(f"  vacuum error {db}: {e}", file=sys.stderr)
+            vacuum_errors += 1
+
+    du_after = _du_sh(cache_dir)
     print(f"\nCleaned {cleaned} excess account(s), {errors} error(s).")
-    return 1 if errors > 0 else 0
+    print(f"Vacuumed {vacuumed} surviving DB(s), {vacuum_errors} error(s).")
+    print(f"Disk usage after:  {du_after}")
+    return 1 if (errors or vacuum_errors) > 0 else 0
 
 
 if __name__ == "__main__":
