@@ -6,6 +6,7 @@ Supports both directory layouts:
   - Old (split): worker-N/relay.domain/accounts.toml  (one DB per relay)
 
 Identifies accounts exceeding the per-domain limit and removes excess entries.
+Keeps the newest accounts (highest IDs) per domain, removes the oldest.
 
 Usage:
     # Dry-run (default): report what would be cleaned
@@ -24,13 +25,18 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import sqlite3
 import subprocess
 import sys
 try:
     import tomllib
 except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[no-redef]
+from collections import defaultdict
 from pathlib import Path
+
+# Must match prober.py RelayPool._MAX_ACCOUNTS_PER_DOMAIN
+_MAX_ACCOUNTS_PER_DOMAIN = 3
 
 
 def check_rpc_servers(cache_dir: Path) -> list[int]:
@@ -45,6 +51,28 @@ def check_rpc_servers(cache_dir: Path) -> list[int]:
         return [int(p) for p in result.stdout.strip().split() if p.strip()]
     except (FileNotFoundError, ValueError):
         return []
+
+
+def read_account_domain(pool_dir: Path, acct_dir_name: str) -> str | None:
+    """Read domain from account sqlite DB. Returns domain string or None."""
+    db = pool_dir / acct_dir_name / "dc.db"
+    if not db.exists():
+        return None
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        # Prefer configured_addr (fully configured) over addr (partially configured),
+        # matching the priority in RelayPool._account_domain().
+        cur = con.execute("SELECT value FROM config WHERE keyname='configured_addr'")
+        row = cur.fetchone()
+        if not row:
+            cur = con.execute("SELECT value FROM config WHERE keyname='addr'")
+            row = cur.fetchone()
+        con.close()
+        if row and "@" in row[0]:
+            return row[0].split("@")[1]
+    except Exception:
+        pass
+    return None
 
 
 def parse_accounts_toml(path: Path) -> tuple[dict, list[dict]]:
@@ -65,27 +93,52 @@ def parse_accounts_toml(path: Path) -> tuple[dict, list[dict]]:
     return data, accounts
 
 
-def write_accounts_toml(path: Path, keep: dict) -> None:
-    """Write accounts.toml keeping only one account entry."""
-    acct = keep
+def write_accounts_toml(path: Path, accounts: list[dict]) -> None:
+    """Write accounts.toml keeping the given accounts, renumbered from 1."""
+    if not accounts:
+        path.write_text("")
+        return
+    ids = list(range(1, len(accounts) + 1))
     lines = [
-        f"selected_account = {acct['id']}",
-        f"next_id = {acct['id'] + 1}",
-        f"accounts_order = [\n    {acct['id']},\n]",
+        f"selected_account = {ids[0]}",
+        f"next_id = {ids[-1] + 1}",
+        f"accounts_order = [{', '.join(str(i) for i in ids)}]",
         "",
-        "[[accounts]]",
-        f"id = {acct['id']}",
-        f'dir = "{acct["dir"]}"',
-        f'uuid = "{acct["uuid"]}"',
     ]
-    path.write_text("\n".join(lines) + "\n")
+    for i, acct in zip(ids, accounts):
+        lines += [
+            "[[accounts]]",
+            f"id = {i}",
+            f'dir = "{acct["dir"]}"',
+            f'uuid = "{acct["uuid"]}"',
+            "",
+        ]
+    path.write_text("\n".join(lines))
+
+
+def get_excess_accounts(accounts: list[dict]) -> list[dict]:
+    """Return accounts exceeding _MAX_ACCOUNTS_PER_DOMAIN per domain.
+
+    Keeps the newest accounts (highest IDs) per domain, marks oldest as excess.
+    Accounts without a domain are treated as a single "(unknown)" group.
+    """
+    by_domain: dict[str, list[dict]] = defaultdict(list)
+    for a in accounts:
+        key = a.get("domain") or "(unknown)"
+        by_domain[key].append(a)
+
+    excess = []
+    for accts in by_domain.values():
+        sorted_accts = sorted(accts, key=lambda a: a["id"], reverse=True)  # newest first
+        excess.extend(sorted_accts[_MAX_ACCOUNTS_PER_DOMAIN:])
+    return excess
 
 
 def analyze_dir(cache_dir: Path) -> list[dict]:
     """Walk the cache dir and find all accounts.toml files.
 
     Handles both layouts:
-    - New: worker-N/accounts.toml (flat, one DB per worker)
+    - New: worker-N/accounts.toml (flat, one DB per worker, domain read from sqlite)
     - Old: worker-N/relay.domain/accounts.toml (split, one DB per relay)
     """
     results = []
@@ -105,12 +158,16 @@ def analyze_dir(cache_dir: Path) -> list[dict]:
                     "error": str(e),
                 })
                 continue
+            # Enrich with domain info from each account's sqlite DB
+            for acct in accounts:
+                acct["domain"] = read_account_domain(pool_dir, acct["dir"])
             results.append({
                 "pool": pool_dir.name,
                 "relay": "(shared)",
                 "path": flat_toml,
                 "accounts": accounts,
                 "count": len(accounts),
+                "flat": True,
             })
             continue
         # Old per-relay layout: accounts.toml in relay subdirs
@@ -136,8 +193,20 @@ def analyze_dir(cache_dir: Path) -> list[dict]:
                 "path": toml_path,
                 "accounts": accounts,
                 "count": len(accounts),
+                "flat": False,
             })
     return results
+
+
+def count_excess(r: dict) -> int:
+    """Return the number of excess accounts in a result entry."""
+    if "accounts" not in r:
+        return 0
+    if r.get("flat"):
+        return len(get_excess_accounts(r["accounts"]))
+    else:
+        # Old per-relay layout: each file is single-domain, limit is _MAX_ACCOUNTS_PER_DOMAIN
+        return max(0, r["count"] - _MAX_ACCOUNTS_PER_DOMAIN)
 
 
 def main(argv=None):
@@ -170,9 +239,9 @@ def main(argv=None):
     # Summary
     total_files = len([r for r in results if "error" not in r])
     total_accounts = sum(r.get("count", 0) for r in results)
-    excess_entries = [r for r in results if r.get("count", 0) > 1]
+    total_excess = sum(count_excess(r) for r in results)
+    excess_entries = [r for r in results if count_excess(r) > 0]
     error_entries = [r for r in results if "error" in r]
-    total_excess = sum(r["count"] - 1 for r in excess_entries)
 
     print(f"Cache dir: {cache_dir}")
     print(f"  accounts.toml files: {total_files}")
@@ -184,7 +253,7 @@ def main(argv=None):
     print()
 
     # Per-pool breakdown
-    pools = {}
+    pools: dict[str, dict] = {}
     for r in results:
         pool = r["pool"]
         if pool not in pools:
@@ -192,7 +261,7 @@ def main(argv=None):
         if "error" not in r:
             pools[pool]["files"] += 1
             pools[pool]["accounts"] += r["count"]
-            pools[pool]["excess"] += max(0, r["count"] - 1)
+            pools[pool]["excess"] += count_excess(r)
 
     print(f"  {'Pool':<20} {'Files':>6} {'Accounts':>9} {'Excess':>7}")
     print(f"  {'-'*20} {'-'*6} {'-'*9} {'-'*7}")
@@ -210,15 +279,31 @@ def main(argv=None):
         print("No cleanup needed.")
         return 0
 
-    # Detail: files with excess accounts
+    # Detail: files/domains with excess accounts
     print("Excess accounts:")
     for r in excess_entries:
         accounts = r["accounts"]
-        keep = min(accounts, key=lambda a: a["id"])
-        remove = [a for a in accounts if a["id"] != keep["id"]]
-        remove_ids = ",".join(str(a["id"]) for a in remove)
-        print(f"  {r['pool']}/{r['relay']}: {r['count']} accounts, "
-              f"keep={keep['id']}, remove={remove_ids}")
+        if r.get("flat"):
+            excess = get_excess_accounts(accounts)
+            by_domain: dict[str, list[dict]] = defaultdict(list)
+            for a in accounts:
+                by_domain[a.get("domain") or "(unknown)"].append(a)
+            for domain, accts in sorted(by_domain.items()):
+                sorted_accts = sorted(accts, key=lambda a: a["id"], reverse=True)
+                n_excess = max(0, len(sorted_accts) - _MAX_ACCOUNTS_PER_DOMAIN)
+                if n_excess > 0:
+                    keep_ids = [a["id"] for a in sorted_accts[:_MAX_ACCOUNTS_PER_DOMAIN]]
+                    rm_ids = [a["id"] for a in sorted_accts[_MAX_ACCOUNTS_PER_DOMAIN:]]
+                    print(f"  {r['pool']}/{domain}: {len(accts)} accounts, "
+                          f"keep={keep_ids}, remove={rm_ids}")
+        else:
+            sorted_accts = sorted(accounts, key=lambda a: a["id"], reverse=True)
+            keep = sorted_accts[:_MAX_ACCOUNTS_PER_DOMAIN]
+            remove = sorted_accts[_MAX_ACCOUNTS_PER_DOMAIN:]
+            keep_ids = [a["id"] for a in keep]
+            remove_ids = [a["id"] for a in remove]
+            print(f"  {r['pool']}/{r['relay']}: {r['count']} accounts, "
+                  f"keep={keep_ids}, remove={remove_ids}")
 
     if not args.apply:
         print(f"\nDry run: would remove {total_excess} excess account(s).")
@@ -230,17 +315,23 @@ def main(argv=None):
     errors = 0
     for r in excess_entries:
         accounts = r["accounts"]
-        relay_dir = r["path"].parent
-        keep = min(accounts, key=lambda a: a["id"])
+        pool_dir = r["path"].parent
+
+        if r.get("flat"):
+            excess = get_excess_accounts(accounts)
+            excess_set = {a["id"] for a in excess}
+            keep_accounts = [a for a in accounts if a["id"] not in excess_set]
+        else:
+            sorted_accts = sorted(accounts, key=lambda a: a["id"], reverse=True)
+            keep_accounts = sorted_accts[:_MAX_ACCOUNTS_PER_DOMAIN]
+            excess = sorted_accts[_MAX_ACCOUNTS_PER_DOMAIN:]
 
         # Back up accounts.toml
         backup = r["path"].with_suffix(".toml.bak")
         shutil.copy2(r["path"], backup)
 
-        for acct in accounts:
-            if acct["id"] == keep["id"]:
-                continue
-            acct_dir = relay_dir / acct["dir"]
+        for acct in excess:
+            acct_dir = pool_dir / acct["dir"]
             if acct_dir.is_dir():
                 try:
                     shutil.rmtree(acct_dir)
@@ -254,8 +345,8 @@ def main(argv=None):
                 cleaned += 1
 
         try:
-            write_accounts_toml(r["path"], keep)
-            print(f"  rewrote {r['path']} (kept account {keep['id']})")
+            write_accounts_toml(r["path"], keep_accounts)
+            print(f"  rewrote {r['path']} (kept {len(keep_accounts)} account(s))")
         except Exception as e:
             print(f"  error rewriting {r['path']}: {e}", file=sys.stderr)
             errors += 1
