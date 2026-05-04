@@ -22,7 +22,7 @@ import threading
 import time
 import urllib.parse
 from collections.abc import Generator
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -90,6 +90,41 @@ def create_qr_url(domain_or_ip: str) -> str:
 # RelayContext / AccountMaker -- manage RPC lifecycle and account creation
 # ---------------------------------------------------------------------------
 
+_CLOSE_TIMEOUT = 5
+
+
+def _ensure_process_dead(rpc):
+    """Kill the rpc-server child process if it is still running."""
+    proc = getattr(rpc, "process", None)
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=2)
+    except Exception:
+        pass
+
+
+def _close_rpc(rpc, label):
+    try:
+        rpc.__exit__(None, None, None)
+    except Exception as e:
+        log.warning("cleanup failed for %s: %s", label, e)
+
+
+def _close_rpc_with_kill(rpc, label):
+    closer = threading.Thread(
+        target=_close_rpc, args=(rpc, label), daemon=True)
+    closer.start()
+    closer.join(timeout=_CLOSE_TIMEOUT)
+    if closer.is_alive():
+        log.warning("close timed out for %s, killing process", label)
+    _ensure_process_dead(rpc)
+
+
 class RelayContext:
     """Context for a relay: RPC connection, DeltaChat instance, AccountMaker.
 
@@ -115,8 +150,6 @@ class RelayContext:
         self.maker = AccountMaker(self.dc)
         return self
 
-    _CLOSE_TIMEOUT = 5
-
     def close(self) -> None:
         """Shut down the RPC server, ensuring the child process is always killed.
 
@@ -129,35 +162,7 @@ class RelayContext:
             self.rpc = None
             self.dc = None
             self.maker = None
-            closer = threading.Thread(
-                target=self._close_rpc, args=(rpc, self.relay), daemon=True)
-            closer.start()
-            closer.join(timeout=self._CLOSE_TIMEOUT)
-            if closer.is_alive():
-                log.warning("close timed out for %s, killing process", self.relay)
-            self._ensure_process_dead(rpc)
-
-    @staticmethod
-    def _close_rpc(rpc, relay):
-        try:
-            rpc.__exit__(None, None, None)
-        except Exception as e:
-            log.warning("cleanup failed for %s: %s", relay, e)
-
-    @staticmethod
-    def _ensure_process_dead(rpc):
-        """Kill the rpc-server child process if it is still running."""
-        proc = getattr(rpc, "process", None)
-        if proc is None or proc.poll() is not None:
-            return
-        try:
-            proc.terminate()
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=2)
-        except Exception:
-            pass
+            _close_rpc_with_kill(rpc, self.relay)
 
     def __enter__(self) -> RelayContext:
         return self.open()
@@ -206,13 +211,28 @@ class AccountMaker:
 
     _MAX_ACCOUNTS_PER_DOMAIN = 3
 
-    def get_relay_account(self, domain, exclude=None):
+    @staticmethod
+    def _account_domain(account):
+        """Extract the relay domain from an account, checking both
+        configured_addr (fully configured) and addr (partially configured).
+        Returns (domain, is_configured) or (None, False).
+        """
+        configured = account.get_config("configured_addr")
+        if configured and "@" in configured:
+            return configured.split("@")[1], True
+        addr = account.get_config("addr")
+        if addr and "@" in addr:
+            return addr.split("@")[1], False
+        return None, False
+
+    def get_relay_account(self, domain, exclude=None, worker_id=None):
         """Get or create an account for domain.
 
         Returns (account, was_online) -- was_online=True means the account
         was already running and does not need wait_account_online().
         """
         _exclude = exclude or ()
+        _wid = f"w{worker_id}" if worker_id is not None else "w?"
 
         # Reuse an already-online account for this domain.
         for account in self.online:
@@ -220,34 +240,52 @@ class AccountMaker:
                 continue
             addr = account.get_config("configured_addr")
             if addr and addr.split("@")[1] == domain:
-                log.info("account_reused", relay=domain, addr=addr)
+                log.info("account_reused", relay=domain, addr=addr,
+                         worker=_wid)
                 return account, True
 
         # New account needed -- emit setup phase events.
-        log.debug("setup_start", relay=domain)
+        log.debug("setup_start", relay=domain, worker=_wid)
         setup_start = time.time()
 
-        # Find a configured-but-offline account, or create a new one.
+        # Scan all accounts in the DB for this domain.  Track both
+        # fully-configured and partially-configured (ghost) accounts
+        # so ghosts count toward the per-domain limit.
         found = None
+        found_unconfigured = None
         domain_count = 0
+        unconfigured_count = 0
         for account in self.dc.get_all_accounts():
             if account in _exclude:
                 continue
-            addr = account.get_config("configured_addr")
-            if addr is not None:
-                addr_domain = addr.split("@")[1] if "@" in addr else None
-                if addr_domain == domain:
-                    domain_count += 1
-                    if account not in self.online and found is None:
+            acct_domain, is_configured = self._account_domain(account)
+            if acct_domain != domain:
+                continue
+            domain_count += 1
+            if not is_configured:
+                unconfigured_count += 1
+            if account not in self.online:
+                if is_configured:
+                    if found is None:
                         found = account
+                else:
+                    if found_unconfigured is None:
+                        found_unconfigured = account
 
         if found is not None:
             addr = found.get_config("configured_addr") or "unknown"
-            log.info("account_resumed", relay=domain, addr=addr)
+            log.info("account_resumed", relay=domain, addr=addr,
+                     worker=_wid, total=domain_count)
+        elif found_unconfigured is not None:
+            found = found_unconfigured
+            log.info("account_resuming_unconfigured", relay=domain,
+                     worker=_wid, total=domain_count,
+                     unconfigured=unconfigured_count)
         else:
             if domain_count >= self._MAX_ACCOUNTS_PER_DOMAIN:
                 raise PingError(
-                    f"Too many accounts for {domain} ({domain_count}), "
+                    f"Too many accounts for {domain} ({domain_count}, "
+                    f"{unconfigured_count} unconfigured), "
                     f"refusing to create more (limit {self._MAX_ACCOUNTS_PER_DOMAIN})"
                 )
             found = self.dc.add_account()
@@ -255,10 +293,14 @@ class AccountMaker:
             found.set_config_from_qr(qr_url)
             from .metrics import account_creations_total
             account_creations_total.labels(relay=domain).inc()
-            log.warning("account_created", relay=domain, total=domain_count + 1)
+            reason = "no_accounts" if domain_count == 0 else "all_online"
+            log.warning("account_created", relay=domain,
+                        total=domain_count + 1,
+                        unconfigured=unconfigured_count,
+                        reason=reason, worker=_wid)
 
         self._add_online(found)
-        log.debug("setup_done", relay=domain,
+        log.debug("setup_done", relay=domain, worker=_wid,
                   elapsed_s=round(time.time() - setup_start, 3))
         return found, False
 
@@ -436,54 +478,87 @@ def _perform_direct_ping(relay_contexts, source, dest, count, interval, timeout)
 
 
 # ---------------------------------------------------------------------------
-# RelayPool -- manages one RelayContext per relay domain
+# RelayPool -- single shared RPC server for all relays in a worker
 # ---------------------------------------------------------------------------
 
 class RelayPool:
-    """Manages one RelayContext per relay domain within a single worker."""
+    """One RPC server per worker, shared across all relay domains.
+
+    Exposes .maker / .rpc / .dc so it can duck-type as a relay context
+    in _perform_direct_ping (which does relay_contexts[source].maker).
+    """
 
     def __init__(self, cache_dir):
         self._cache_dir = Path(cache_dir)
-        self._contexts = {}
+        self.rpc = None
+        self.dc = None
+        self.maker = None
+        self._relays = set()
+
+    def _start_rpc(self):
+        """Start the shared RPC server for all relays in this pool."""
+        accts_dir = self._cache_dir
+        if accts_dir.exists() and not accts_dir.joinpath("accounts.toml").exists():
+            # Detect old per-relay layout (worker-N/relay.domain/accounts.toml).
+            # Refuse to wipe -- accounts are recoverable via the migration script.
+            has_subdirs = any(
+                (d / "accounts.toml").exists()
+                for d in accts_dir.iterdir()
+                if d.is_dir()
+            )
+            if has_subdirs:
+                raise SystemExit(
+                    f"Old per-relay account layout detected in {accts_dir}.\n"
+                    "Refusing to start. Choose one:\n"
+                    "  scripts/migrate_accounts.py <cache_dir> --apply  "
+                    "(preserve accounts)\n"
+                    "  chatmail-prober ... --reset all                  "
+                    "(start fresh)"
+                )
+        accts_dir.mkdir(parents=True, exist_ok=True)
+        rpc = Rpc(accounts_dir=accts_dir)
+        rpc.__enter__()
+        self.rpc = rpc
+        self.dc = DeltaChat(rpc)
+        self.maker = AccountMaker(self.dc)
+
+    def _shutdown_rpc(self):
+        """Shut down the shared RPC server with a timeout, then kill."""
+        rpc = self.rpc
+        if rpc is None:
+            return
+        self.rpc = None
+        self.dc = None
+        self.maker = None
+        _close_rpc_with_kill(rpc, self._cache_dir.name)
 
     def open_all(self, relays):
-        """Pre-open contexts for all relays.  Fails fast on errors."""
-        for relay in relays:
-            if relay not in self._contexts:
-                ctx = RelayContext(relay, self._cache_dir / relay)
-                ctx.open()
-                self._contexts[relay] = ctx
+        """Ensure the shared RPC server is running, register relays."""
+        if self.rpc is None:
+            self._start_rpc()
+        self._relays.update(relays)
 
     def contexts(self):
-        """Return relay -> RelayContext dict (read-only after open_all)."""
-        return dict(self._contexts)
+        """Return relay -> context dict; all relays share this pool."""
+        return {r: self for r in self._relays}
 
-    def reopen(self, relay):
-        """Close and reopen a single relay's context (e.g. after RPC crash)."""
-        old = self._contexts.pop(relay, None)
-        if old is not None:
-            with contextlib.suppress(Exception):
-                old.close()
-        ctx = RelayContext(relay, self._cache_dir / relay)
-        ctx.open()
-        self._contexts[relay] = ctx
-        log.info("pool: reopened context for %s", relay)
+    def reopen(self):
+        """Restart the shared RPC server."""
+        self._shutdown_rpc()
+        self._start_rpc()
+        log.info("pool: reopened shared rpc-server in %s", self._cache_dir)
 
     def prune(self, active_relays):
-        """Close and remove contexts for relays no longer in the active set."""
-        active = set(active_relays)
-        stale = [r for r in self._contexts if r not in active]
-        for relay in stale:
-            ctx = self._contexts.pop(relay)
-            with contextlib.suppress(Exception):
-                ctx.close()
-            log.info("pool: pruned context for %s", relay)
+        """Forget relays no longer in the active set."""
+        stale = self._relays - set(active_relays)
+        if stale:
+            log.info("pool: pruned relay(s): %s", ", ".join(sorted(stale)))
+        self._relays &= set(active_relays)
 
     def close(self):
-        """Close all managed contexts."""
-        for ctx in self._contexts.values():
-            ctx.close()
-        self._contexts.clear()
+        """Close the shared RPC server."""
+        self._shutdown_rpc()
+        self._relays.clear()
 
     def __enter__(self):
         return self

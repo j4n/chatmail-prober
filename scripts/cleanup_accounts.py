@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """cleanup_accounts.py -- analyze and trim stale accounts from the cache dir.
 
-Each relay context directory (e.g. worker-0/nine.testrun.org/) should have
-at most one account in its accounts.toml.  Extra entries are leftovers from
-directory restructuring and waste memory inside each RPC server process.
+Supports both directory layouts:
+  - New (flat):  worker-N/accounts.toml  (one DB per worker, multiple domains)
+  - Old (split): worker-N/relay.domain/accounts.toml  (one DB per relay)
+
+Identifies accounts exceeding the per-domain limit and removes excess entries.
 
 Usage:
     # Dry-run (default): report what would be cleaned
@@ -80,11 +82,38 @@ def write_accounts_toml(path: Path, keep: dict) -> None:
 
 
 def analyze_dir(cache_dir: Path) -> list[dict]:
-    """Walk the cache dir and find all accounts.toml files with their stats."""
+    """Walk the cache dir and find all accounts.toml files.
+
+    Handles both layouts:
+    - New: worker-N/accounts.toml (flat, one DB per worker)
+    - Old: worker-N/relay.domain/accounts.toml (split, one DB per relay)
+    """
     results = []
     for pool_dir in sorted(cache_dir.iterdir()):
         if not pool_dir.is_dir():
             continue
+        # New flat layout: accounts.toml directly in pool dir
+        flat_toml = pool_dir / "accounts.toml"
+        if flat_toml.exists():
+            try:
+                _data, accounts = parse_accounts_toml(flat_toml)
+            except Exception as e:
+                results.append({
+                    "pool": pool_dir.name,
+                    "relay": "(shared)",
+                    "path": flat_toml,
+                    "error": str(e),
+                })
+                continue
+            results.append({
+                "pool": pool_dir.name,
+                "relay": "(shared)",
+                "path": flat_toml,
+                "accounts": accounts,
+                "count": len(accounts),
+            })
+            continue
+        # Old per-relay layout: accounts.toml in relay subdirs
         for relay_dir in sorted(pool_dir.iterdir()):
             if not relay_dir.is_dir():
                 continue

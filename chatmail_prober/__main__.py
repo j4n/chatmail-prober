@@ -252,25 +252,23 @@ def parse_args(argv=None):
 def reset_accounts(cache_dir: Path, domains: list[str]) -> None:
     """Remove cached account directories.
 
-    domains=["all"] wipes all worker-* dirs; specific domains are removed
-    from every worker-* dir and alive-check/.
+    domains=["all"] wipes all worker-* dirs but preserves alive-check
+    (its long-lived persistent accounts are valuable to keep).
+    Selective per-domain reset is not supported with the flat layout
+    (worker-N/accounts.toml holds many domains in one DB); use
+    scripts/cleanup_accounts.py for per-account pruning instead.
     """
-    if domains == ["all"]:
-        for child in cache_dir.iterdir():
-            if child.is_dir() and child.name != "alive-check":
-                shutil.rmtree(child)
-                log.info("Reset: removed %s", child)
-    else:
-        subdirs = [
-            child for child in cache_dir.iterdir()
-            if child.is_dir()
-        ]
-        for subdir in subdirs:
-            for domain in domains:
-                target = subdir / domain
-                if target.exists():
-                    shutil.rmtree(target)
-                    log.info("Reset: removed %s", target)
+    if domains != ["all"]:
+        raise SystemExit(
+            "Selective per-domain reset is not supported with the flat "
+            "per-worker layout. Use one of:\n"
+            "  --reset all                          (wipe all worker dirs)\n"
+            "  scripts/cleanup_accounts.py --apply  (trim excess accounts)"
+        )
+    for child in cache_dir.iterdir():
+        if child.is_dir() and child.name != "alive-check":
+            shutil.rmtree(child)
+            log.info("Reset: removed %s", child)
 
 
 def main(argv=None):
@@ -404,23 +402,24 @@ def main(argv=None):
 
     all_relays = relays
     alive_pool = RelayPool(cache_dir / "alive-check")
+    worker_pools: list[RelayPool] = []
     previously_dead: dict[str, str | None] = {}
-    relays, previously_dead = check_relays_alive(
-        all_relays, args, cache_dir, unreachable_relays=unreachable_relays,
-        alive_pool=alive_pool)
-    if not relays:
-        raise SystemExit("No reachable relays -- aborting")
-    log.info("continuing with %d/%d relays online, starting matrix probe", len(relays), len(all_relays))
-    last_alive_check = time.monotonic()
-    log.info("next alive check in %ds", args.alive_check_interval)
-
-    if args.port:
-        start_exporter_server(args.port)
-
-    executors.extend(ThreadPoolExecutor(max_workers=1) for _ in range(args.workers))
-    worker_pools = [RelayPool(cache_dir / f"worker-{i}") for i in range(args.workers)]
-
     try:
+        relays, previously_dead = check_relays_alive(
+            all_relays, args, cache_dir, unreachable_relays=unreachable_relays,
+            alive_pool=alive_pool)
+        if not relays:
+            raise SystemExit("No reachable relays -- aborting")
+        log.info("continuing with %d/%d relays online, starting matrix probe", len(relays), len(all_relays))
+        last_alive_check = time.monotonic()
+        log.info("next alive check in %ds", args.alive_check_interval)
+
+        if args.port:
+            start_exporter_server(args.port)
+
+        executors.extend(ThreadPoolExecutor(max_workers=1) for _ in range(args.workers))
+        worker_pools = [RelayPool(cache_dir / f"worker-{i}") for i in range(args.workers)]
+
         while not shutdown_event.is_set():
             interval = args.alive_check_interval
             if interval == 0 or time.monotonic() - last_alive_check >= interval:

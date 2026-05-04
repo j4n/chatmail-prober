@@ -99,7 +99,7 @@ graph TD
     end
 
     DCSERVER["deltachat-rpc-server
-        subprocess (1 per relay)"]
+        subprocess (1 per worker, shared across relays)"]
 
     MAIN -->|"run_probe(src, dst, ...)"| PROBER
     PROBER -->|"Rpc.__enter__()"| RPC
@@ -122,8 +122,10 @@ graph TD
   thread pool. This halves the thread count per probe and eliminates the
   group-join phase entirely.
 - **Per-worker RelayPools**: Each worker thread gets its own RelayPool with
-  an isolated accounts directory. Within a worker, accounts are reused across
-  probes via `get_relay_account()`. W workers * N relays = W*N subprocesses.
+  an isolated accounts directory and a single shared `deltachat-rpc-server`
+  subprocess that hosts all of that worker's relay accounts. Within a worker,
+  accounts are reused across probes via `get_relay_account()`. W workers
+  total, regardless of N relays.
 
 ---
 
@@ -136,10 +138,10 @@ sequenceDiagram
     participant W as Worker Thread
     participant RP as run_probe()
     participant PP as _perform_direct_ping()
-    participant RPC1 as RelayContext(src)
-    participant RPC2 as RelayContext(dst)
-    participant DC1 as deltachat-rpc-server (src)
-    participant DC2 as deltachat-rpc-server (dst)
+    participant RPC1 as Worker pool (src account)
+    participant RPC2 as Worker pool (dst account)
+    participant DC1 as deltachat-rpc-server (worker, shared)
+    participant DC2 as deltachat-rpc-server (worker, shared)
     participant SM as SMTP/IMAP relays
 
     W->>RP: run_probe(src, dst, count, ...)
@@ -227,26 +229,48 @@ lifecycle at each decision point:
 
 ### Account directory layout
 
+Flat per-worker layout: one `accounts.toml` per pool, UUID-named
+account data dirs as siblings. The relay each account belongs to is
+recorded inside its `dc.db` (configured `addr`), not encoded in the
+directory name.
+
 ```
 ~/.cache/chatmail-prober/
 ├── worker-0/
-│   ├── relay-a.example/
-│   │   ├── accounts.toml
-│   │   └── ...
-│   ├── relay-b.example/
-│   └── relay-c.example/
+│   ├── accounts.toml
+│   ├── <uuid-1>/
+│   │   ├── dc.db
+│   │   └── dc.db-blobs/
+│   ├── <uuid-2>/
+│   └── ...
 ├── worker-1/
-│   ├── relay-a.example/
-│   ├── relay-b.example/
-│   └── relay-c.example/
+│   ├── accounts.toml
+│   └── ...
 └── alive-check/             # persistent pool for pre-flight alive checks
-    ├── relay-a.example/
+    ├── accounts.toml
     └── ...
 ```
 
-Each RelayPool manages its own set of `deltachat-rpc-server` subprocesses
-and account directories (open, close, reopen on RPC crash). The alive-check
-pool uses the same infrastructure as worker pools.
+Each RelayPool runs a single shared `deltachat-rpc-server` subprocess
+against its accounts directory and manages the lifecycle (open, close,
+reopen on RPC crash). The alive-check pool uses the same infrastructure
+as worker pools.
+
+#### Migration from the old per-relay layout
+
+Older versions stored `worker-N/relay.domain/accounts.toml` (one
+rpc-server per (worker, relay) pair). On startup, `RelayPool._start_rpc`
+detects the old layout and refuses to run rather than silently wiping
+accounts. To migrate without losing accounts, stop the service and run:
+
+```
+uv run python scripts/migrate_accounts.py /var/lib/chatmail-prober --apply
+```
+
+The script merges per-relay `accounts.toml` files into a single
+per-worker file with renumbered IDs, moves UUID data dirs up one level,
+and removes the now-empty relay subdirs. A dry-run (no `--apply`) is the
+default.
 
 ---
 
@@ -550,8 +574,10 @@ hung or threw an exception.
 
 **Handling**: When `run_round()` or `check_relays_alive()` detects an
 RPC-level error keyword in a probe's error string, it calls
-`pool.reopen(relay)` to close the dead context and start a fresh one.
-Subsequent probes for that relay use the new context.
+`pool.reopen()` to restart the worker's shared rpc-server, then refreshes
+the worker's relay-context dict. Subsequent probes for any relay on that
+worker use the new server. Each worker has a per-round reopen cap (3) to
+avoid loops.
 
 ### File descriptor exhaustion
 
@@ -592,7 +618,7 @@ sudo useradd -r -s /usr/sbin/nologin -d /opt/chatmail-prober chatmail-prober
 | `/opt/chatmail-prober/` | Home dir for the service user; uv installs to `.local/bin/uv` here |
 | `/opt/chatmail-prober/chatmail-prober/` | Git repo (`WorkingDirectory`) |
 | `/var/lib/chatmail-prober/relays.txt` | Relay list cache written by `--auto-fetch` on each startup |
-| `/var/lib/chatmail-prober/` | Per-relay account cache and state (created by `StateDirectory=`) |
+| `/var/lib/chatmail-prober/` | Per-worker account cache and state (created by `StateDirectory=`) |
 | `/var/tmp/chatmail-prober.prom` | Textfile written atomically by the prober |
 | `/var/lib/prometheus/node-exporter/chatmail-prober.prom` | Destination for node-exporter |
 

@@ -111,6 +111,7 @@ def check_relays_alive(relays, args, cache_dir, previously_dead=None,
         }
         dead = {}  # relay -> error string
         completed = set()
+        alive_pool_reopened = False
         actual_workers = min(len(all_check_relays), args.workers)
         batches = -(-len(all_check_relays) // actual_workers)  # ceil division
         deadline = args.timeout * (batches + 1)
@@ -128,14 +129,15 @@ def check_relays_alive(relays, args, cache_dir, previously_dead=None,
                     if result.error:
                         log.warning("relay_dead", error=result.error)
                         dead[relay] = result.error
-                        if alive_pool is not None and any(
+                        if alive_pool is not None and not alive_pool_reopened and any(
                             kw in result.error.lower() for kw in _RPC_CRASH_KEYWORDS
                         ):
                             try:
-                                alive_pool.reopen(relay)
+                                alive_pool.reopen()
                                 relay_contexts.update(alive_pool.contexts())
+                                alive_pool_reopened = True
                             except Exception as e:
-                                log.warning("alive_reopen_failed", relay=relay, error=str(e))
+                                log.warning("alive_reopen_failed", error=str(e))
                     else:
                         log.info("relay_ok",
                                  rtt_ms=round(result.rtts_ms[0]) if result.rtts_ms else 0)
@@ -285,7 +287,7 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
     completed = 0
     failed = 0
     round_results: list[ProbeResult] = []
-    reopen_count = {}  # relay -> number of reopens this round
+    reopened_workers = set()  # worker_ids whose shared rpc-server was restarted
     _reopen_limit = 3
     for future in as_completed(all_futures):
         if shutdown_event and shutdown_event.is_set():
@@ -313,20 +315,15 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
                     n=completed, total=len(pairs), error=result.error,
                 )
                 if any(kw in result.error.lower() for kw in _RPC_CRASH_KEYWORDS):
-                    pool = worker_pools[worker_id]
-                    for relay in (src, dst):
-                        prior = reopen_count.get(relay, 0)
-                        if prior >= _reopen_limit:
-                            log.debug("skipping_reopen", relay=relay, prior_reopens=prior)
-                            continue
+                    if worker_id not in reopened_workers and len(reopened_workers) < _reopen_limit:
                         try:
-                            pool.reopen(relay)
-                            reopen_count[relay] = prior + 1
-                            # Update the captured relay_contexts dict so other running probes
-                            # in this worker see the freshly reopened context, not the old closed one.
+                            pool = worker_pools[worker_id]
+                            pool.reopen()
                             worker_relay_contexts[worker_id].update(pool.contexts())
+                            reopened_workers.add(worker_id)
                         except Exception as reopen_err:
-                            log.warning("reopen_failed", relay=relay, error=str(reopen_err))
+                            log.warning("reopen_failed", worker_id=worker_id,
+                                        error=str(reopen_err))
             else:
                 log.info(
                     "probe_ok",

@@ -1,19 +1,14 @@
-"""Tests for selective --reset [DOMAIN...] behaviour.
+"""Tests for --reset behaviour.
 
-Cache layout under test:
+Cache layout under test (legacy per-relay shape, used to populate the dir;
+the new code only cares about top-level pool dirs):
   cache_dir/
-    worker-0/
-      nine.testrun.org/   <- RelayContext accounts dir
-      mailchat.pl/
-    worker-1/
-      nine.testrun.org/
-      mailchat.pl/
-    alive-check/
-      nine.testrun.org/
-      mailchat.pl/
+    worker-0/...
+    worker-1/...
+    alive-check/...
 
---reset alone  : wipe all worker-* dirs, leave alive-check untouched
---reset D...   : wipe D from every worker-* dir AND from alive-check
+--reset all       : wipe all worker-* dirs, leave alive-check untouched
+--reset DOMAIN... : not supported under the flat layout, raises SystemExit
 """
 from __future__ import annotations
 
@@ -89,39 +84,13 @@ class TestResetAccountsFunction:
         reset_accounts(cache, domains=["all"])
         assert (cache / "alive-check").exists()
 
-    def test_selective_reset_removes_domain_from_workers(self, tmp_path):
+    def test_selective_reset_raises_systemexit(self, tmp_path):
+        """Selective per-domain reset is not supported under the flat layout."""
         cache = _make_cache(tmp_path)
-        reset_accounts(cache, domains=["nine.testrun.org"])
-        assert not (cache / "worker-0" / "nine.testrun.org").exists()
-        assert not (cache / "worker-1" / "nine.testrun.org").exists()
-
-    def test_selective_reset_preserves_other_domain_in_workers(self, tmp_path):
-        cache = _make_cache(tmp_path)
-        reset_accounts(cache, domains=["nine.testrun.org"])
-        assert (cache / "worker-0" / "mailchat.pl").exists()
-        assert (cache / "worker-1" / "mailchat.pl").exists()
-
-    def test_selective_reset_also_clears_alive_check(self, tmp_path):
-        cache = _make_cache(tmp_path)
-        reset_accounts(cache, domains=["nine.testrun.org"])
-        assert not (cache / "alive-check" / "nine.testrun.org").exists()
-
-    def test_selective_reset_preserves_other_domain_in_alive_check(self, tmp_path):
-        cache = _make_cache(tmp_path)
-        reset_accounts(cache, domains=["nine.testrun.org"])
-        assert (cache / "alive-check" / "mailchat.pl").exists()
-
-    def test_selective_reset_multiple_domains(self, tmp_path):
-        cache = _make_cache(tmp_path)
-        reset_accounts(cache, domains=["nine.testrun.org", "mailchat.pl"])
-        assert not (cache / "worker-0" / "nine.testrun.org").exists()
-        assert not (cache / "worker-0" / "mailchat.pl").exists()
-
-    def test_selective_reset_unknown_domain_is_noop(self, tmp_path):
-        cache = _make_cache(tmp_path)
-        # Should not raise even if domain has no cached accounts
-        reset_accounts(cache, domains=["unknown.example"])
-        assert (cache / "worker-0" / "nine.testrun.org").exists()
+        with pytest.raises(SystemExit) as exc_info:
+            reset_accounts(cache, domains=["nine.testrun.org"])
+        # Message should point users at cleanup_accounts.py
+        assert "cleanup_accounts" in str(exc_info.value)
 
     def test_full_reset_empty_cache_is_noop(self, tmp_path):
         cache = tmp_path / "empty-cache"

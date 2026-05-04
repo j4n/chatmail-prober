@@ -114,73 +114,80 @@ class TestRunProbeWithContexts:
 
 
 class TestRelayPool:
-    @patch("chatmail_prober.prober.RelayContext")
-    def test_open_all_creates_contexts(self, MockCtx, tmp_path):
+    @patch("chatmail_prober.prober.Rpc")
+    def test_open_all_starts_shared_rpc(self, MockRpc, tmp_path):
         pool = RelayPool(tmp_path)
         pool.open_all(["a.test", "b.test"])
 
-        assert MockCtx.call_count == 2
+        MockRpc.assert_called_once_with(accounts_dir=tmp_path)
         contexts = pool.contexts()
         assert set(contexts.keys()) == {"a.test", "b.test"}
+        # All relays share the same pool as context
+        assert all(ctx is pool for ctx in contexts.values())
 
-    @patch("chatmail_prober.prober.RelayContext")
-    def test_open_all_deduplicates(self, MockCtx, tmp_path):
+    @patch("chatmail_prober.prober.Rpc")
+    def test_open_all_deduplicates(self, MockRpc, tmp_path):
         pool = RelayPool(tmp_path)
         pool.open_all(["a.test", "b.test"])
         pool.open_all(["a.test", "c.test"])
 
-        assert MockCtx.call_count == 3  # a, b, then c (a not repeated)
+        # Only one Rpc started, relays are just tracked
+        MockRpc.assert_called_once()
         assert set(pool.contexts().keys()) == {"a.test", "b.test", "c.test"}
 
-    @patch("chatmail_prober.prober.RelayContext")
-    def test_close_clears_contexts(self, MockCtx, tmp_path):
+    @patch("chatmail_prober.prober.Rpc")
+    def test_close_clears_pool(self, MockRpc, tmp_path):
         pool = RelayPool(tmp_path)
         pool.open_all(["a.test"])
         pool.close()
 
         assert pool.contexts() == {}
-        MockCtx.return_value.close.assert_called_once()
+        assert pool.rpc is None
+        assert pool.maker is None
 
-    @patch("chatmail_prober.prober.RelayContext")
-    def test_context_manager(self, MockCtx, tmp_path):
+    @patch("chatmail_prober.prober.Rpc")
+    def test_context_manager(self, MockRpc, tmp_path):
         with RelayPool(tmp_path) as pool:
             pool.open_all(["a.test"])
-        MockCtx.return_value.close.assert_called_once()
+            assert pool.maker is not None
+        assert pool.rpc is None
 
-    @patch("chatmail_prober.prober.RelayContext")
-    def test_accounts_dir_per_relay(self, MockCtx, tmp_path):
+    @patch("chatmail_prober.prober.Rpc")
+    def test_shared_accounts_dir(self, MockRpc, tmp_path):
+        """All relays share one accounts_dir (the pool's cache_dir)."""
         pool = RelayPool(tmp_path)
         pool.open_all(["relay.example"])
 
-        MockCtx.assert_called_once_with("relay.example",
-                                        tmp_path / "relay.example")
+        MockRpc.assert_called_once_with(accounts_dir=tmp_path)
 
-    @patch("chatmail_prober.prober.RelayContext")
-    def test_reopen_replaces_context(self, MockCtx, tmp_path):
-        ctx1 = MagicMock()
-        ctx2 = MagicMock()
-        MockCtx.side_effect = [ctx1, ctx2]
-
+    @patch("chatmail_prober.prober.Rpc")
+    def test_reopen_restarts_rpc(self, MockRpc, tmp_path):
         pool = RelayPool(tmp_path)
         pool.open_all(["a.test"])
-        assert pool.contexts()["a.test"] is ctx1
+        assert MockRpc.call_count == 1
 
-        pool.reopen("a.test")
-        assert pool.contexts()["a.test"] is ctx2
-        ctx1.close.assert_called_once()
+        pool.reopen()
+        assert MockRpc.call_count == 2
+        # Pool still serves all relays after reopen
+        assert "a.test" in pool.contexts()
 
-    @patch("chatmail_prober.prober.RelayContext")
-    def test_reopen_survives_close_error(self, MockCtx, tmp_path):
-        """reopen works even if closing the old context raises."""
-        old_ctx = MagicMock()
-        old_ctx.close.side_effect = RuntimeError("dead")
-        new_ctx = MagicMock()
-        MockCtx.side_effect = [old_ctx, new_ctx]
+    @patch("chatmail_prober.prober.Rpc")
+    def test_prune_forgets_relays(self, MockRpc, tmp_path):
+        pool = RelayPool(tmp_path)
+        pool.open_all(["a.test", "b.test", "c.test"])
+        pool.prune(["a.test", "c.test"])
 
+        assert set(pool.contexts().keys()) == {"a.test", "c.test"}
+
+    @patch("chatmail_prober.prober.Rpc")
+    def test_pool_has_maker_attribute(self, MockRpc, tmp_path):
+        """Pool duck-types as relay context for _perform_direct_ping."""
         pool = RelayPool(tmp_path)
         pool.open_all(["a.test"])
-        pool.reopen("a.test")  # should not raise
-        assert pool.contexts()["a.test"] is new_ctx
+
+        assert pool.maker is not None
+        ctx = pool.contexts()["a.test"]
+        assert ctx.maker is pool.maker
 
 
 class TestFatalCategories:

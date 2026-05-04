@@ -125,14 +125,36 @@ visualized in two Grafana dashboards.
 ### Per-worker account directories
 
 Each worker thread gets its own RelayPool with an isolated accounts directory
-(`worker-0/`, `worker-1/`, etc.). Within a worker, accounts are reused across
-probes: `get_relay_account()` returns an already-online account when one is
-available, skipping the setup wait. With W workers and N relays there are up
-to W*N account directories and W*N rpc-server processes.
+(`worker-0/`, `worker-1/`, etc.) and a single shared `deltachat-rpc-server`
+process that hosts all of that worker's relay accounts. Within a worker,
+accounts are reused across probes: `get_relay_account()` returns an
+already-online account when one is available, skipping the setup wait.
+With W workers there are W rpc-server processes total, regardless of how
+many relays N are being probed.
 
 Account creation is limited to 3 per domain per pool to prevent silent
 accumulation on the relay servers. When the limit is reached, probes fail
 with a clear error instead of creating more accounts.
+
+Cache layout (flat, per-worker):
+
+```
+cache_dir/
+  worker-0/
+    accounts.toml
+    <uuid-1>/   (account data dir, dc.db etc.)
+    <uuid-2>/
+    ...
+  worker-1/...
+  alive-check/...
+```
+
+If you are upgrading from the old per-relay layout
+(`worker-N/relay.domain/accounts.toml`), run
+`scripts/migrate_accounts.py <cache_dir> --apply` while the service is
+stopped to merge accounts into the new layout without losing them.
+`chatmail-prober` will refuse to start against the old layout rather than
+silently wipe it.
 
 ### Pre-flight alive check and --scan
 
