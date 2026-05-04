@@ -3,5 +3,6 @@ __pycache__/
 .venv/
 *.egg-info/
 dist/
+chatmail_prober/_version.py
 .coverage
 grafana/screenshot.*
