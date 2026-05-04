@@ -39,6 +39,42 @@ from pathlib import Path
 _MAX_ACCOUNTS_PER_DOMAIN = 3
 
 
+def _count_blobs(acct_dir: Path) -> int:
+    """Count files in the dc.db-blobs directory of an account."""
+    blobs_dir = acct_dir / "dc.db-blobs"
+    if not blobs_dir.is_dir():
+        return 0
+    return sum(1 for f in blobs_dir.iterdir() if f.is_file())
+
+
+def _clean_blobs(acct_dir: Path) -> int:
+    """Delete all files in dc.db-blobs/. Returns number of files deleted."""
+    blobs_dir = acct_dir / "dc.db-blobs"
+    if not blobs_dir.is_dir():
+        return 0
+    deleted = 0
+    for f in blobs_dir.iterdir():
+        if f.is_file():
+            try:
+                f.unlink()
+                deleted += 1
+            except Exception:
+                pass
+    return deleted
+
+
+def _all_account_dirs(cache_dir: Path) -> list[Path]:
+    """Return all account data dirs (UUID dirs containing dc.db) across all pools."""
+    dirs = []
+    for pool_dir in cache_dir.iterdir():
+        if not pool_dir.is_dir():
+            continue
+        for entry in pool_dir.iterdir():
+            if entry.is_dir() and (entry / "dc.db").exists():
+                dirs.append(entry)
+    return dirs
+
+
 def _du_sh(path: Path) -> str:
     """Return human-readable disk usage for path (like du -sh)."""
     try:
@@ -316,20 +352,22 @@ def main(argv=None):
             print(f"  {r['pool']}/{r['relay']}: {r['count']} accounts, "
                   f"keep={keep_ids}, remove={remove_ids}")
 
+    total_blobs = sum(_count_blobs(d) for d in _all_account_dirs(cache_dir))
     du_before = _du_sh(cache_dir)
-    print(f"Disk usage: {du_before}")
+    print(f"Blob files:  {total_blobs}")
+    print(f"Disk usage:  {du_before}")
 
     if not args.apply:
-        print(f"\nDry run: would remove {total_excess} excess account(s).")
+        print(f"\nDry run: would remove {total_excess} excess account(s) "
+              f"and {total_blobs} blob file(s).")
         print("Re-run with --apply to execute.")
-        return 1 if total_excess > 0 else 0
+        return 1 if (total_excess or total_blobs) > 0 else 0
 
-    print(f"Cleaning...")
+    print("Cleaning...")
 
     # Apply cleanup
     cleaned = 0
     errors = 0
-    all_kept_dirs: list[Path] = []
     for r in excess_entries:
         accounts = r["accounts"]
         pool_dir = r["path"].parent
@@ -368,16 +406,13 @@ def main(argv=None):
             print(f"  error rewriting {r['path']}: {e}", file=sys.stderr)
             errors += 1
 
-        for acct in keep_accounts:
-            all_kept_dirs.append(pool_dir / acct["dir"])
-
-    # VACUUM surviving account DBs to reclaim fragmented space
+    # Clean blobs and VACUUM all surviving account DBs across the whole cache
+    blobs_deleted = 0
     vacuumed = 0
     vacuum_errors = 0
-    for acct_dir in all_kept_dirs:
+    for acct_dir in _all_account_dirs(cache_dir):
+        blobs_deleted += _clean_blobs(acct_dir)
         db = acct_dir / "dc.db"
-        if not db.exists():
-            continue
         try:
             con = sqlite3.connect(str(db))
             con.execute("VACUUM")
@@ -389,7 +424,8 @@ def main(argv=None):
 
     du_after = _du_sh(cache_dir)
     print(f"\nCleaned {cleaned} excess account(s), {errors} error(s).")
-    print(f"Vacuumed {vacuumed} surviving DB(s), {vacuum_errors} error(s).")
+    print(f"Deleted {blobs_deleted} blob file(s), vacuumed {vacuumed} DB(s)"
+          f"{f', {vacuum_errors} vacuum error(s)' if vacuum_errors else ''}.")
     print(f"Disk usage after:  {du_after} (was {du_before})")
     return 1 if (errors or vacuum_errors) > 0 else 0
 
