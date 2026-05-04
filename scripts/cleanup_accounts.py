@@ -321,41 +321,40 @@ def main(argv=None):
             print(f"  {r['pool']}/{r['relay']}: {r['error']}")
         print()
 
-    if not excess_entries:
-        print("No cleanup needed.")
-        return 0
-
-    # Detail: files/domains with excess accounts
-    print("Excess accounts:")
-    for r in excess_entries:
-        accounts = r["accounts"]
-        if r.get("flat"):
-            excess = get_excess_accounts(accounts)
-            by_domain: dict[str, list[dict]] = defaultdict(list)
-            for a in accounts:
-                by_domain[a.get("domain") or "(unknown)"].append(a)
-            for domain, accts in sorted(by_domain.items()):
-                keep = 0 if domain == "(unknown)" else _MAX_ACCOUNTS_PER_DOMAIN
-                sorted_accts = sorted(accts, key=lambda a: a["id"], reverse=True)
-                n_excess = max(0, len(sorted_accts) - keep)
-                if n_excess > 0:
-                    keep_ids = [a["id"] for a in sorted_accts[:keep]]
-                    rm_ids = [a["id"] for a in sorted_accts[keep:]]
-                    print(f"  {r['pool']}/{domain}: {len(accts)} accounts, "
-                          f"keep={keep_ids}, remove={rm_ids}")
-        else:
-            sorted_accts = sorted(accounts, key=lambda a: a["id"], reverse=True)
-            keep = sorted_accts[:_MAX_ACCOUNTS_PER_DOMAIN]
-            remove = sorted_accts[_MAX_ACCOUNTS_PER_DOMAIN:]
-            keep_ids = [a["id"] for a in keep]
-            remove_ids = [a["id"] for a in remove]
-            print(f"  {r['pool']}/{r['relay']}: {r['count']} accounts, "
-                  f"keep={keep_ids}, remove={remove_ids}")
-
     total_blobs = sum(_count_blobs(d) for d in _all_account_dirs(cache_dir))
     du_before = _du_sh(cache_dir)
     print(f"Blob files:  {total_blobs}")
     print(f"Disk usage:  {du_before}")
+
+    if not excess_entries and not total_blobs:
+        print("No cleanup needed.")
+        return 0
+
+    if excess_entries:
+        print("\nExcess accounts:")
+        for r in excess_entries:
+            accounts = r["accounts"]
+            if r.get("flat"):
+                by_domain: dict[str, list[dict]] = defaultdict(list)
+                for a in accounts:
+                    by_domain[a.get("domain") or "(unknown)"].append(a)
+                for domain, accts in sorted(by_domain.items()):
+                    keep = 0 if domain == "(unknown)" else _MAX_ACCOUNTS_PER_DOMAIN
+                    sorted_accts = sorted(accts, key=lambda a: a["id"], reverse=True)
+                    n_excess = max(0, len(sorted_accts) - keep)
+                    if n_excess > 0:
+                        keep_ids = [a["id"] for a in sorted_accts[:keep]]
+                        rm_ids = [a["id"] for a in sorted_accts[keep:]]
+                        print(f"  {r['pool']}/{domain}: {len(accts)} accounts, "
+                              f"keep={keep_ids}, remove={rm_ids}")
+            else:
+                sorted_accts = sorted(accounts, key=lambda a: a["id"], reverse=True)
+                keep = sorted_accts[:_MAX_ACCOUNTS_PER_DOMAIN]
+                remove = sorted_accts[_MAX_ACCOUNTS_PER_DOMAIN:]
+                keep_ids = [a["id"] for a in keep]
+                remove_ids = [a["id"] for a in remove]
+                print(f"  {r['pool']}/{r['relay']}: {r['count']} accounts, "
+                      f"keep={keep_ids}, remove={remove_ids}")
 
     if not args.apply:
         print(f"\nDry run: would remove {total_excess} excess account(s) "
