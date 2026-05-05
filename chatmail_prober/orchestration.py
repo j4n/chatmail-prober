@@ -19,7 +19,7 @@ from .metrics import (
     clear_stale_labels, clear_stale_relay_labels,
     last_round_timestamp, rounds_total,
     relay_status, round_duration_seconds,
-    update_metrics, verify_relay_status,
+    sample_relay_connections, update_metrics, verify_relay_status,
 )
 from .output import write_textfile
 from .prober import ProbeResult, RelayPool, run_probe
@@ -340,6 +340,7 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
     success_count = completed - failed
     success_rate = 100.0 * success_count / completed if completed > 0 else 0.0
     avg_ms_per_pair = int(elapsed * 1000 / completed) if completed > 0 else 0
+    sample_relay_connections(relays)
     log.warning("round_complete",
                 success_count=success_count, total=completed,
                 success_rate_pct=round(success_rate, 1),

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import socket
 import statistics
+import subprocess
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -126,6 +127,13 @@ relay_status = Gauge(
     registry=CMPING_REGISTRY,
 )
 
+relay_connections = Gauge(
+    "cmping_relay_connections",
+    "Current network connection count to relay (established TCP connections)",
+    ["relay"],
+    registry=CMPING_REGISTRY,
+)
+
 
 def clear_stale_labels(active_relays: list[str]) -> None:
     """Remove label sets for relays no longer in the active set.
@@ -222,10 +230,28 @@ def is_transient_alive_error(relay: str | None, error_str: str | None) -> bool:
 def clear_stale_relay_labels(configured_relays: list[str]) -> None:
     """Remove per-relay label sets for relays no longer in the configured list."""
     active = set(configured_relays)
-    for metric in (relay_status, account_creations_total):
+    for metric in (relay_status, account_creations_total, relay_connections):
         for (relay,) in list(metric._metrics.keys()):
             if relay not in active:
                 metric.remove(relay)
+
+
+def sample_relay_connections(relays: list[str]) -> None:
+    """Sample network connection counts to each relay and update metrics.
+    """
+    for relay in relays:
+        try:
+            ip = socket.getaddrinfo(relay, 993)[0][4][0]
+            result = subprocess.run(
+                ["ss", "-tn", f"dst {ip}"],
+                capture_output=True, text=True, timeout=5
+            )
+            conn_count = len([l for l in result.stdout.split("\n") if l.strip()])
+            conn_count = max(0, conn_count - 1)  # subtract header
+            relay_connections.labels(relay=relay).set(conn_count)
+        except Exception as e:
+            log.debug("sample_connections failed for %s: %s", relay, type(e).__name__)
+            relay_connections.labels(relay=relay).set(0)
 
 
 def update_metrics(result: ProbeResult) -> None:
