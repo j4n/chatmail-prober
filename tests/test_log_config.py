@@ -1,9 +1,17 @@
-"""Tests for chatmail_prober.log_config -- structlog pipeline configuration."""
+"""Tests for chatmail_prober.log_config -- structlog pipeline configuration.
+
+Also covers _SupprRpcClosedFilter (defined in __main__) which suppresses
+the spurious "RPC server closed" error logged by deltachat-rpc-client
+during graceful shutdown -- this lives with the rest of the logging
+configuration tests since it is purely a logging-pipeline concern.
+"""
 
 import logging
+import threading
 
 import structlog
 
+from chatmail_prober.__main__ import _SupprRpcClosedFilter
 from chatmail_prober.log_config import configure_logging
 
 
@@ -54,3 +62,24 @@ class TestConfigureLogging:
         )
         assert handler.filters[0].filter(record) is True
         assert record.levelno == logging.DEBUG
+
+
+class TestSupprRpcClosedFilter:
+    def _make_record(self, msg):
+        return logging.LogRecord("test", logging.ERROR, "", 0, msg, (), None)
+
+    def test_passes_during_normal_operation(self):
+        f = _SupprRpcClosedFilter(threading.Event())
+        assert f.filter(self._make_record("RPC server closed")) is True
+
+    def test_suppresses_during_shutdown(self):
+        event = threading.Event()
+        event.set()
+        f = _SupprRpcClosedFilter(event)
+        assert f.filter(self._make_record("RPC server closed")) is False
+
+    def test_passes_unrelated_errors_during_shutdown(self):
+        event = threading.Event()
+        event.set()
+        f = _SupprRpcClosedFilter(event)
+        assert f.filter(self._make_record("Some other error")) is True

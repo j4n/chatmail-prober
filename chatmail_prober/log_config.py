@@ -7,9 +7,9 @@ Third-party stdlib loggers are captured and formatted consistently.
 import logging
 import re
 import sys
+from typing import Any, cast
 
 import structlog
-
 
 _RPC_READY_RE = re.compile(r"RPC server ready\.")
 
@@ -34,9 +34,12 @@ class _RpcReadyFilter(logging.Filter):
 def configure_logging(level: int | str = logging.INFO) -> None:
     """Configure structlog with ConsoleRenderer and the stdlib root logger."""
     if isinstance(level, str):
-        level = logging.getLevelName(level.upper())
+        level = int(logging.getLevelName(level.upper()))
 
-    shared_processors = [
+    # structlog processor signatures use complex generic Callables; the
+    # heterogeneous list here is fine at runtime but trips mypy --strict.
+    # Type as list[Any] so structlog.configure / ProcessorFormatter accept it.
+    shared_processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
@@ -74,4 +77,4 @@ def configure_logging(level: int | str = logging.INFO) -> None:
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     """Return a structlog BoundLogger bound to *name*."""
-    return structlog.get_logger(name)
+    return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name))

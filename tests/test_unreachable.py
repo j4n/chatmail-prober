@@ -10,8 +10,6 @@ Design contract:
 from __future__ import annotations
 
 import pathlib
-import sys
-import textwrap
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,41 +17,25 @@ import pytest
 # ---------------------------------------------------------------------------
 # parse_args tests
 # ---------------------------------------------------------------------------
-
 from chatmail_prober.__main__ import parse_args
 
 
 class TestUnreachableFlag:
-    def test_unreachable_flag_long_form(self, tmp_path):
+    @pytest.mark.parametrize("flag_form", ["--unreachable={path}", "-u"])
+    def test_unreachable_flag_accepts_long_and_short_forms(self, tmp_path, flag_form):
         f = tmp_path / "unreachable.txt"
         f.write_text("dead.example\n")
-        args = parse_args(["relays.txt", f"--unreachable={f}"])
-        assert args.unreachable == str(f)
-
-    def test_unreachable_flag_short_form(self, tmp_path):
-        f = tmp_path / "unreachable.txt"
-        f.write_text("dead.example\n")
-        args = parse_args(["relays.txt", "-u", str(f)])
+        argv = ["relays.txt"]
+        if "{path}" in flag_form:
+            argv.append(flag_form.format(path=f))
+        else:
+            argv.extend([flag_form, str(f)])
+        args = parse_args(argv)
         assert args.unreachable == str(f)
 
     def test_unreachable_defaults_to_none(self):
         args = parse_args(["relays.txt"])
         assert args.unreachable is None
-
-
-# ---------------------------------------------------------------------------
-# read_relay_list with unreachable file
-# ---------------------------------------------------------------------------
-
-from chatmail_prober.__main__ import read_relay_list
-
-
-class TestReadUnreachableRelays:
-    def test_unreachable_file_is_readable(self, tmp_path):
-        f = tmp_path / "unreachable.txt"
-        f.write_text("dead.example\nstate.blocked.example\n")
-        result = read_relay_list([f])
-        assert result == ["dead.example", "state.blocked.example"]
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +55,7 @@ def _make_args(**kwargs):
 
 
 def _mock_probe(error=None, rtts_ms=None):
-    from chatmail_prober.prober import ProbeResult
+    from chatmail_prober.probe import ProbeResult
     return ProbeResult(
         source="a.example", destination="a.example",
         sent=1, received=0 if error else 1,
@@ -169,7 +151,7 @@ class TestUnreachablePromotion:
 # smoke_check.py --exclude-unreachable
 # ---------------------------------------------------------------------------
 
-from scripts.smoke_check import _read_relays, main as smoke_main
+from scripts.smoke_check import main as smoke_main
 
 
 class TestSmokeCheckUnreachableExclusion:

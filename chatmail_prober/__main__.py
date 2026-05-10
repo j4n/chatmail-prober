@@ -16,14 +16,18 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import FrameType
 
 from .cli_summary import render as render_summary
 from .log_config import configure_logging, get_logger
 from .orchestration import (
-    check_relays_alive, kill_stale_rpc_servers, run_round, scan_relays,
+    check_relays_alive,
+    kill_stale_rpc_servers,
+    run_round,
+    scan_relays,
 )
 from .output import print_metrics, start_exporter_server, write_textfile
-from .prober import RelayPool
+from .probe import RelayPool
 
 log = get_logger(__name__)
 
@@ -32,43 +36,45 @@ AUTO_FETCH_URL = "https://chatmail.at/relays"
 
 class _SupprRpcClosedFilter(logging.Filter):
     """Suppress expected 'RPC server closed' errors during shutdown."""
-    def __init__(self, shutdown_event):
+    def __init__(self, shutdown_event: threading.Event) -> None:
         super().__init__()
         self._shutdown_event = shutdown_event
 
-    def filter(self, record):
+    def filter(self, record: logging.LogRecord) -> bool:
         if (self._shutdown_event.is_set()
                 and "RPC server closed" in str(record.getMessage())):
             return False  # suppress during shutdown
         return True
 
 
-def read_relay_list(paths):
-    """Read relay domains from one or more files (one per line, # comments)."""
-    seen = set()
-    relays = []
+def read_relay_list(paths: list[str]) -> list[str]:
+    """Read relay domains from one or more files (one per line, # comments).
+
+    Deduplicates across files while preserving first-seen order.
+    """
+    raw_lines: list[str] = []
     for path in paths:
         with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and line not in seen:
-                    seen.add(line)
-                    relays.append(line)
+            for raw in f:
+                line = raw.strip()
+                if line and not line.startswith("#"):
+                    raw_lines.append(line)
+    relays = list(dict.fromkeys(raw_lines))
     if not relays:
         raise SystemExit(f"No relays found in {paths}")
     return relays
 
 
-def read_exclude_list(path):
+def read_exclude_list(path: str) -> set[tuple[str, str]]:
     """Read pair exclusions from a file.
 
     Format: one "source->destination" per line.  # comments and blank lines
     are ignored.  Returns a set of (source, destination) tuples.
     """
-    excludes = set()
+    excludes: set[tuple[str, str]] = set()
     with open(path) as f:
-        for line in f:
-            line = line.strip()
+        for raw in f:
+            line = raw.strip()
             if not line or line.startswith("#"):
                 continue
             if "->" not in line:
@@ -87,7 +93,7 @@ def _bracket_ipv6(host: str) -> str:
     return host
 
 
-def fetch_relay_list(url, dest):
+def fetch_relay_list(url: str, dest: str) -> None:
     """Fetch relay domains from url, write to dest (one domain per line).
 
     Parses chatmail.at/relays HTML: extracts text from <a class="hilite"> tags.
@@ -101,7 +107,7 @@ def fetch_relay_list(url, dest):
     log.info("Fetched %d relays from %s -> %s", len(domains), url, dest)
 
 
-def parse_args(argv=None):
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="chatmail-prober",
         description=__doc__,
@@ -271,7 +277,7 @@ def reset_accounts(cache_dir: Path, domains: list[str]) -> None:
             log.info("Reset: removed %s", child)
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
 
     if args.quiet:
@@ -288,7 +294,6 @@ def main(argv=None):
     # Suppress harmless "RPC server closed" errors from event loop during shutdown.
     logging.getLogger().addFilter(_SupprRpcClosedFilter(shutdown_event))
 
-    # -vv also enables root-level DEBUG (rpc/deltachat events)
     if args.verbose >= 2:
         logging.getLogger().setLevel(logging.DEBUG)
 
@@ -299,8 +304,8 @@ def main(argv=None):
         if soft < hard:
             resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
             log.debug("Raised fd limit %d -> %d", soft, hard)
-    except (ValueError, OSError):
-        pass
+    except (ValueError, OSError) as e:
+        log.debug("fd limit raise failed: %s", e)
 
     cache_dir = Path(args.cache_dir).expanduser()
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -348,25 +353,19 @@ def main(argv=None):
         lock.unlink(missing_ok=True)
         log.debug("Removed stale lock: %s", lock)
 
-    executors = []
+    executors: list[ThreadPoolExecutor] = []
 
     stop_after_round = threading.Event()
-    sigint_count = 0
 
-    def _handle_signal(signum, frame):
-        nonlocal sigint_count
-        sigint_count += 1
-        if sigint_count >= 2:
-            log.warning("Second interrupt -- killing immediately")
-            os._exit(1)
-        shutdown_event.set()
+    def _handle_signal(signum: int, frame: FrameType | None) -> None:
+        if shutdown_event.is_set():
+            return  # second signal: let systemd SIGKILL us
         log.info("Shutting down, killing running probes...")
+        shutdown_event.set()
         for ex in executors:
             ex.shutdown(wait=False, cancel_futures=True)
-        kill_stale_rpc_servers(cache_dir, graceful=False)
-        threading.Timer(5.0, os._exit, args=(0,)).start()
 
-    def _handle_usr1(signum, frame):
+    def _handle_usr1(signum: int, frame: FrameType | None) -> None:
         stop_after_round.set()
         log.warning("SIGUSR1 received -- will exit after current round completes")
 
@@ -390,7 +389,7 @@ def main(argv=None):
     else:
         _verbosity_idx = 1
 
-    def _handle_usr2(signum, frame):
+    def _handle_usr2(signum: int, frame: FrameType | None) -> None:
         nonlocal _verbosity_idx
         _verbosity_idx = (_verbosity_idx + 1) % len(_verbosity_levels)
         level, root_level, label = _verbosity_levels[_verbosity_idx]

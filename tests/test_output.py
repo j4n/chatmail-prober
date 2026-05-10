@@ -1,10 +1,11 @@
 """Tests for textfile output (atomic write)."""
 
-import os
 
-from chatmail_prober.output import write_textfile
-from chatmail_prober.prober import ProbeResult
+from prometheus_client.parser import text_string_to_metric_families
+
 from chatmail_prober.metrics import update_metrics
+from chatmail_prober.output import write_textfile
+from chatmail_prober.probe import ProbeResult
 
 
 class TestWriteTextfile:
@@ -40,9 +41,49 @@ class TestWriteTextfile:
         assert "# HELP" in content
 
     def test_no_process_metrics_in_textfile(self, tmp_path):
-        """Textfile must not include process_* metrics — they collide
+        """Textfile must not include process_* metrics -- they collide
         with node_exporter's own process collectors."""
         out = tmp_path / "test.prom"
         write_textfile(str(out))
         content = out.read_text()
         assert "process_" not in content
+
+    def test_textfile_is_parseable_by_prometheus_client(self, tmp_path):
+        """End-to-end: feed several probes and parse the output back through
+        prometheus_client's own text parser. This catches malformed labels,
+        bad escaping, missing # HELP/TYPE lines, NaN encoding, and any other
+        violation of the Prometheus exposition format that would make
+        node_exporter silently drop the file.
+        """
+        results = [
+            ProbeResult("a.test", "b.test", sent=3, received=3, loss=0.0,
+                        rtts_ms=[100.0, 200.0, 300.0],
+                        account_setup_time=1.5, message_time=0.8),
+            ProbeResult("a.test", "a.test", sent=3, received=2, loss=33.3,
+                        rtts_ms=[110.0, 220.0]),
+            ProbeResult("b.test", "a.test", error="Connection timeout"),
+        ]
+        for r in results:
+            update_metrics(r)
+
+        out = tmp_path / "test.prom"
+        write_textfile(str(out))
+        content = out.read_text()
+
+        families = list(text_string_to_metric_families(content))
+        assert families, "parser returned no metric families"
+
+        names = {f.name for f in families}
+        # At minimum: gauge for rtt, counter family for probe_success.
+        assert any(n.startswith("cmping_rtt") for n in names)
+        assert "cmping_probe_success" in names
+
+        # Every label set must round-trip cleanly (catches escaping bugs in
+        # source/destination strings; NaN values are intentional for failed
+        # probes and are valid in the exposition format).
+        for fam in families:
+            for sample in fam.samples:
+                for k, v in sample.labels.items():
+                    assert "\n" not in v and '"' not in v, (
+                        f"unescaped char in {sample.name}{{{k}={v!r}}}"
+                    )

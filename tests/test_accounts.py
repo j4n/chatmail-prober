@@ -20,15 +20,13 @@ import threading
 import time
 
 import pytest
-
 from deltachat_rpc_client import EventType
 
-from chatmail_prober.prober import AccountMaker, PingError
 from chatmail_prober.metrics import relay_status_value
-
+from chatmail_prober.probe import AccountMaker, PingError
 
 # ---------------------------------------------------------------------------
-# Minimal stubs — real queue / threading, no network
+# Minimal stubs. Real queue and threading, no network.
 # ---------------------------------------------------------------------------
 
 class _Rpc:
@@ -71,7 +69,7 @@ class _Account:
         if qr_url.startswith("dcaccount:"):
             domain = qr_url[len("dcaccount:"):]
         else:
-            domain = qr_url.split("@")[-1]
+            domain = qr_url.rsplit("@", maxsplit=1)[-1]
         self._config["configured_addr"] = f"newuser{self.id}@{domain}"
 
     def start_io(self) -> None:
@@ -288,3 +286,74 @@ class TestAccountReuse:
         assert dc.add_account_calls == 1, (
             f"Expected 1 add_account call across {N} rounds, got {dc.add_account_calls}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: per-domain account creation cap
+# ---------------------------------------------------------------------------
+
+class TestMaxAccountsPerDomain:
+    """get_relay_account must refuse to create more than max_accounts_per_domain.
+
+    The cap protects relays from runaway account creation when ghost
+    (partially-configured) accounts accumulate from broken setups.
+    """
+
+    def _ghost(self, rpc, account_id, domain):
+        """Build a partially-configured ('ghost') account: only addr, no configured_addr."""
+        a = _Account(rpc, account_id, domain)
+        a._config.pop("configured_addr", None)
+        return a
+
+    def test_raises_at_limit_with_only_ghosts_online(self):
+        """Cap fires when N ghost accounts are already online and another is requested."""
+        rpc = _Rpc()
+        dc = _DC(rpc, "relay.example")
+        maker = AccountMaker(dc, max_accounts_per_domain=2)
+
+        # Two ghosts already in DB and tracked as online; nothing is reusable
+        # (ghosts have no configured_addr, so _find_reusable_online returns None).
+        g1 = self._ghost(rpc, 1, "relay.example")
+        g2 = self._ghost(rpc, 2, "relay.example")
+        dc._accounts.extend([g1, g2])
+        maker.online.extend([g1, g2])
+
+        with pytest.raises(PingError) as exc_info:
+            maker.get_relay_account("relay.example")
+
+        msg = str(exc_info.value)
+        assert "Too many accounts" in msg
+        assert "relay.example" in msg
+        assert "limit 2" in msg
+        assert "2 unconfigured" in msg
+        assert dc.add_account_calls == 0, "Must not create a new account at the cap"
+
+    def test_under_limit_creates(self):
+        """Below the cap, get_relay_account creates normally."""
+        rpc = _Rpc()
+        dc = _DC(rpc, "relay.example")
+        maker = AccountMaker(dc, max_accounts_per_domain=3)
+
+        _, was_online = maker.get_relay_account("relay.example")
+
+        assert was_online is False
+        assert dc.add_account_calls == 1
+
+    def test_self_loop_can_hit_cap_via_exclude(self):
+        """In the self-loop case, the excluded sender does not count toward
+        the cap because exclude is checked before counting -- but a fresh
+        ghost still in self.online does count, blocking creation.
+        """
+        rpc = _Rpc()
+        dc = _DC(rpc, "relay.example")
+        maker = AccountMaker(dc, max_accounts_per_domain=1)
+
+        # Existing online ghost on the relay (counts, not reusable).
+        ghost = self._ghost(rpc, 1, "relay.example")
+        dc._accounts.append(ghost)
+        maker.online.append(ghost)
+
+        with pytest.raises(PingError) as exc_info:
+            maker.get_relay_account("relay.example")
+        assert "Too many accounts" in str(exc_info.value)
+        assert "limit 1" in str(exc_info.value)

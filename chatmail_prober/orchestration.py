@@ -1,28 +1,40 @@
 """Probe orchestration: alive checks, probe rounds, and relay scanning."""
 
+import argparse
 import gc
 import os
 import signal
+import statistics
 import subprocess
+import threading
 import time
 from concurrent.futures import (
+    Future,
     ThreadPoolExecutor,
-    TimeoutError as FuturesTimeoutError,
     as_completed,
 )
+from concurrent.futures import (
+    TimeoutError as FuturesTimeoutError,
+)
 from pathlib import Path
+from typing import Any
 
 import structlog
 
 from .log_config import get_logger
 from .metrics import (
-    clear_stale_labels, clear_stale_relay_labels,
-    last_round_timestamp, rounds_total,
-    relay_status, round_duration_seconds,
-    sample_relay_connections, update_metrics, verify_relay_status,
+    clear_stale_labels,
+    clear_stale_relay_labels,
+    last_round_timestamp,
+    relay_status,
+    round_duration_seconds,
+    rounds_total,
+    sample_relay_connections,
+    update_metrics,
+    verify_relay_status,
 )
 from .output import write_textfile
-from .prober import ProbeResult, RelayPool, run_probe
+from .probe import ProbeResult, RelayPool, run_probe
 
 log = get_logger(__name__)
 
@@ -34,11 +46,35 @@ _RPC_CRASH_KEYWORDS = (
 )
 
 
-def _avg_ms(rtts_ms: list[float]) -> float:
-    return sum(rtts_ms) / len(rtts_ms) if rtts_ms else 0.0
+def _is_rpc_crash(error_str: str) -> bool:
+    """True if error_str looks like an RPC transport failure worth a reopen."""
+    s = error_str.lower()
+    return any(kw in s for kw in _RPC_CRASH_KEYWORDS)
 
 
-def kill_stale_rpc_servers(cache_dir, graceful=True):
+def _try_reopen_pool(
+    pool: RelayPool,
+    relay_contexts: dict[str, RelayPool],
+    *,
+    log_event: str,
+    **log_ctx: Any,
+) -> bool:
+    """Reopen pool and refresh relay_contexts; log+return False on failure.
+
+    The caller decides *whether* to reopen (per-pool gate, retry budget,
+    etc.); this helper just performs the reopen + context refresh + error
+    logging that's identical between alive-check and run_round.
+    """
+    try:
+        pool.reopen()
+        relay_contexts.update(pool.contexts())
+        return True
+    except Exception as e:
+        log.warning(log_event, error=str(e), **log_ctx)
+        return False
+
+
+def kill_stale_rpc_servers(cache_dir: str | Path, graceful: bool = True) -> None:
     """Kill orphaned deltachat-rpc-server processes matching our cache_dir.
 
     graceful=True sends SIGTERM first (lets sqlite close WAL cleanly);
@@ -48,7 +84,7 @@ def kill_stale_rpc_servers(cache_dir, graceful=True):
     try:
         result = subprocess.run(
             ["pgrep", "-f", f"deltachat-rpc-server.*{cache_str}"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, check=False,
         )
         if result.returncode != 0:
             return
@@ -71,8 +107,14 @@ def kill_stale_rpc_servers(cache_dir, graceful=True):
         pass
 
 
-def check_relays_alive(relays, args, cache_dir, previously_dead=None,
-                       unreachable_relays=None, alive_pool=None):
+def check_relays_alive(
+    relays: list[str],
+    args: argparse.Namespace,
+    cache_dir: Path,
+    previously_dead: dict[str, str | None] | None = None,
+    unreachable_relays: list[str] | None = None,
+    alive_pool: RelayPool | None = None,
+) -> tuple[list[str], dict[str, str | None]]:
     """Self-probe each relay in parallel; return (alive_list, dead_dict).
 
     Transient failures (timeout, unknown) are retried up to 2 times unless
@@ -83,19 +125,20 @@ def check_relays_alive(relays, args, cache_dir, previously_dead=None,
     across rounds instead of creating throwaway accounts each time.
     """
     if previously_dead is None:
-        previously_dead = set()
+        previously_dead = {}
     unreachable_set: set[str] = set(unreachable_relays or [])
     # Include unreachable relays in the alive check so we can detect recovery.
     all_check_relays = list(relays) + [r for r in unreachable_set if r not in relays]
 
     # Pre-open shared contexts so accounts are reused across rounds.
+    relay_contexts: dict[str, RelayPool] | None
     if alive_pool is not None:
         alive_pool.open_all(all_check_relays)
         relay_contexts = alive_pool.contexts()
     else:
         relay_contexts = None
 
-    def _submit_probe(executor, relay):
+    def _submit_probe(executor: ThreadPoolExecutor, relay: str) -> Future[ProbeResult]:
         if relay_contexts is not None:
             return executor.submit(
                 run_probe, relay, relay, 1, args.ping_interval,
@@ -109,8 +152,8 @@ def check_relays_alive(relays, args, cache_dir, previously_dead=None,
             _submit_probe(pool, r): r
             for r in all_check_relays
         }
-        dead = {}  # relay -> error string
-        completed = set()
+        dead: dict[str, str | None] = {}  # relay -> error string
+        completed: set[str] = set()
         alive_pool_reopened = False
         actual_workers = min(len(all_check_relays), args.workers)
         batches = -(-len(all_check_relays) // actual_workers)  # ceil division
@@ -129,15 +172,12 @@ def check_relays_alive(relays, args, cache_dir, previously_dead=None,
                     if result.error:
                         log.warning("relay_dead", error=result.error)
                         dead[relay] = result.error
-                        if alive_pool is not None and not alive_pool_reopened and any(
-                            kw in result.error.lower() for kw in _RPC_CRASH_KEYWORDS
-                        ):
-                            try:
-                                alive_pool.reopen()
-                                relay_contexts.update(alive_pool.contexts())
+                        if (alive_pool is not None and not alive_pool_reopened
+                                and _is_rpc_crash(result.error)):
+                            assert relay_contexts is not None  # alive_pool implies contexts
+                            if _try_reopen_pool(alive_pool, relay_contexts,
+                                                log_event="alive_reopen_failed"):
                                 alive_pool_reopened = True
-                            except Exception as e:
-                                log.warning("alive_reopen_failed", error=str(e))
                     else:
                         log.info("relay_ok",
                                  rtt_ms=round(result.rtts_ms[0]) if result.rtts_ms else 0)
@@ -167,13 +207,13 @@ def check_relays_alive(relays, args, cache_dir, previously_dead=None,
     # Cache DNS-based verify_relay_status results to avoid redundant lookups.
     _status_cache: dict[tuple[str, str | None], int] = {}
 
-    def _cached_status(relay, error_str):
+    def _cached_status(relay: str, error_str: str | None) -> int:
         key = (relay, error_str)
         if key not in _status_cache:
             _status_cache[key] = verify_relay_status(relay, error_str)
         return _status_cache[key]
 
-    def _is_transient(relay, error_str):
+    def _is_transient(relay: str, error_str: str | None) -> bool:
         return _cached_status(relay, error_str) in (-1, 0)
 
     retryable = {r: err for r, err in dead.items()
@@ -246,11 +286,18 @@ def check_relays_alive(relays, args, cache_dir, previously_dead=None,
     log.warning("alive_check_complete",
                 elapsed_s=round(elapsed, 1),
                 online=len(alive), total=len(all_known))
-    return alive, dead  # dead: dict[str, str | None]  (host -> error)
+    return alive, dead
 
 
-def run_round(relays, args, executors, worker_pools, shutdown_event,
-              textfile=None, exclude=None):
+def run_round(
+    relays: list[str],
+    args: argparse.Namespace,
+    executors: list[ThreadPoolExecutor],
+    worker_pools: list[RelayPool],
+    shutdown_event: threading.Event | None,
+    textfile: str | None = None,
+    exclude: set[tuple[str, str]] | None = None,
+) -> tuple[float, list[ProbeResult]]:
     """Run one complete probe round across all relay pairs."""
     clear_stale_labels(relays)
     pairs = [(s, d) for s in relays for d in relays
@@ -262,13 +309,13 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
     for pool in worker_pools:
         pool.open_all(relays)
 
-    worker_pairs = [[] for _ in range(args.workers)]
+    worker_pairs: list[list[tuple[str, str]]] = [[] for _ in range(args.workers)]
     for i, pair in enumerate(pairs):
         worker_pairs[i % args.workers].append(pair)
 
     # Capture per-worker relay contexts so we can update them if a relay is reopened
-    worker_relay_contexts = {}
-    all_futures = {}
+    worker_relay_contexts: dict[int, dict[str, RelayPool]] = {}
+    all_futures: dict[Future[ProbeResult], tuple[str, str, int]] = {}
     for worker_id, executor in enumerate(executors):
         relay_contexts = worker_pools[worker_id].contexts()
         worker_relay_contexts[worker_id] = relay_contexts
@@ -287,7 +334,7 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
     completed = 0
     failed = 0
     round_results: list[ProbeResult] = []
-    reopened_workers = set()  # worker_ids whose shared rpc-server was restarted
+    reopened_workers: set[int] = set()  # worker_ids whose shared rpc-server was restarted
     _reopen_limit = 3
     for future in as_completed(all_futures):
         if shutdown_event and shutdown_event.is_set():
@@ -314,22 +361,22 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
                     "probe_failed",
                     n=completed, total=len(pairs), error=result.error,
                 )
-                if any(kw in result.error.lower() for kw in _RPC_CRASH_KEYWORDS):
-                    if worker_id not in reopened_workers and len(reopened_workers) < _reopen_limit:
-                        try:
-                            pool = worker_pools[worker_id]
-                            pool.reopen()
-                            worker_relay_contexts[worker_id].update(pool.contexts())
-                            reopened_workers.add(worker_id)
-                        except Exception as reopen_err:
-                            log.warning("reopen_failed", worker_id=worker_id,
-                                        error=str(reopen_err))
+                if (_is_rpc_crash(result.error)
+                        and worker_id not in reopened_workers
+                        and len(reopened_workers) < _reopen_limit):
+                    if _try_reopen_pool(
+                        worker_pools[worker_id],
+                        worker_relay_contexts[worker_id],
+                        log_event="reopen_failed",
+                        worker_id=worker_id,
+                    ):
+                        reopened_workers.add(worker_id)
             else:
                 log.info(
                     "probe_ok",
                     n=completed, total=len(pairs),
                     sent=result.sent, recv=result.received,
-                    avg_ms=round(_avg_ms(result.rtts_ms)),
+                    avg_ms=round(statistics.fmean(result.rtts_ms)) if result.rtts_ms else 0,
                     loss_pct=result.loss,
                 )
 
@@ -349,7 +396,7 @@ def run_round(relays, args, executors, worker_pools, shutdown_event,
     return elapsed, round_results
 
 
-def scan_relays(relays, args, cache_dir):
+def scan_relays(relays: list[str], args: argparse.Namespace, cache_dir: Path) -> None:
     """Self-probe all relays in parallel, print ranked by avg RTT, then exit."""
     log.info("Scanning %d relays...", len(relays))
 
@@ -357,7 +404,7 @@ def scan_relays(relays, args, cache_dir):
     try:
         scan_pool.open_all(relays)
         relay_contexts = scan_pool.contexts()
-        results = {}
+        results: dict[str, ProbeResult] = {}
         with ThreadPoolExecutor(max_workers=min(len(relays), args.workers)) as pool:
             futures = {
                 pool.submit(run_probe, r, r, args.count, args.ping_interval,
@@ -371,13 +418,13 @@ def scan_relays(relays, args, cache_dir):
                 if results[relay].error:
                     log.info("DEAD %s: %s", relay, results[relay].error)
                 else:
-                    log.info("OK   %s (%.0fms)", relay, _avg_ms(results[relay].rtts_ms))
+                    log.info("OK   %s (%.0fms)", relay, statistics.fmean(results[relay].rtts_ms))
     finally:
         scan_pool.close()
 
     ranked = sorted(
         relays,
-        key=lambda r: _avg_ms(results[r].rtts_ms) if results[r].rtts_ms else float("inf"),
+        key=lambda r: statistics.fmean(results[r].rtts_ms) if results[r].rtts_ms else float("inf"),
     )
 
     print("\nScan results (fastest first):\n")
@@ -389,5 +436,5 @@ def scan_relays(relays, args, cache_dir):
             print(f"  {i:<5} {relay:<40} {'DEAD':>10} {'':>8} {'':>8}")
         else:
             marker = " <--" if i <= args.top else ""
-            print(f"  {i:<5} {relay:<40} {_avg_ms(r.rtts_ms):>9.0f}ms {r.loss:>7.1f}% {len(r.rtts_ms):>8}{marker}")
+            print(f"  {i:<5} {relay:<40} {statistics.fmean(r.rtts_ms):>9.0f}ms {r.loss:>7.1f}% {len(r.rtts_ms):>8}{marker}")
     print()

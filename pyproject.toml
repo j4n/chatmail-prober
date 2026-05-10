@@ -27,14 +27,19 @@ version-file = "chatmail_prober/_version.py"
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.2",
+    "ruff>=0.6",
+    "mypy>=1.11",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "ruff>=0.6",
+    "mypy>=1.11",
 ]
 
 [tool.ruff]
+line-length = 120
 lint.select = [
     "F",   # Pyflakes
     "I",   # isort
@@ -42,6 +47,21 @@ lint.select = [
     "PLE", # Pylint Error
     "PLW", # Pylint Warning
 ]
+
+# Tests legitimately use lazy imports for fixture isolation and to keep
+# import order out of the way of monkeypatching; don't fight that with PLC0415.
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLC0415"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unused_ignores = true
+warn_return_any = true
+
+[[tool.mypy.overrides]]
+module = ["deltachat_rpc_client.*", "deltachat.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "-v -ra --strict-markers -p no:deltachat_rpc_client.pytestplugin"

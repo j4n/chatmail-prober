@@ -35,8 +35,11 @@ except ModuleNotFoundError:
 from collections import defaultdict
 from pathlib import Path
 
-# Must match prober.py RelayPool._MAX_ACCOUNTS_PER_DOMAIN
-_MAX_ACCOUNTS_PER_DOMAIN = 3
+from chatmail_prober.accounts import AccountMaker
+
+# Single source of truth lives on AccountMaker; the script-side name is just
+# an alias so the existing call sites stay readable.
+_MAX_ACCOUNTS_PER_DOMAIN = AccountMaker.DEFAULT_MAX_ACCOUNTS_PER_DOMAIN
 
 
 def _count_blobs(acct_dir: Path) -> int:

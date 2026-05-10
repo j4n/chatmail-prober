@@ -10,8 +10,7 @@ import statistics
 
 import pytest
 
-from chatmail_prober.prober import ProbeResult
-
+from chatmail_prober.probe import ProbeResult
 
 SAMPLE_RTTS = [100.0, 200.0, 300.0, 400.0, 500.0,
                600.0, 700.0, 800.0, 900.0, 1000.0]

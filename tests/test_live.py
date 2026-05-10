@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from chatmail_prober.__main__ import read_relay_list
-from chatmail_prober.prober import run_probe
+from chatmail_prober.probe import run_probe
 
 EXAMPLE_RELAYS = str(Path(__file__).resolve().parent.parent / "relays.txt.example")
 

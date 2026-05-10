@@ -15,10 +15,7 @@ from __future__ import annotations
 
 import io
 
-import pytest
-
-from chatmail_prober.prober import ProbeResult
-
+from chatmail_prober.probe import ProbeResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,48 +46,24 @@ def _render(*args, **kwargs) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Module contract
-# ---------------------------------------------------------------------------
-
-class TestModuleContract:
-    def test_import(self):
-        from chatmail_prober import cli_summary  # noqa: F401
-
-    def test_render_callable(self):
-        from chatmail_prober.cli_summary import render
-        assert callable(render)
-
-
-# ---------------------------------------------------------------------------
 # Table header
 # ---------------------------------------------------------------------------
 
-class TestTableHeader:
-    def test_route_column_header(self):
-        out = _render([_ok()], ["a.example", "b.example"], [], elapsed_s=5.0)
-        assert "Route" in out
+import pytest
 
-    def test_sent_recv_loss_headers(self):
-        out = _render([_ok()], ["a.example", "b.example"], [], elapsed_s=5.0)
-        assert "Sent" in out
-        assert "Recv" in out
-        assert "Loss" in out
 
-    def test_rtt_column_headers(self):
-        out = _render([_ok()], ["a.example", "b.example"], [], elapsed_s=5.0)
-        assert "p50" in out
-        assert "p90" in out
-        assert "p99" in out
-        assert "mdev" in out
-
-    def test_timing_column_headers(self):
-        out = _render([_ok()], ["a.example", "b.example"], [], elapsed_s=5.0)
-        assert "Setup" in out
-        assert "Msg" in out
+@pytest.mark.parametrize("header", [
+    "Route", "Sent", "Recv", "Loss",
+    "p50", "p90", "p99", "mdev",
+    "Setup", "Msg",
+])
+def test_table_header_present(header):
+    out = _render([_ok()], ["a.example", "b.example"], [], elapsed_s=5.0)
+    assert header in out
 
 
 # ---------------------------------------------------------------------------
-# Table rows — successful probes
+# Table rows for successful probes.
 # ---------------------------------------------------------------------------
 
 class TestSuccessRows:
@@ -99,10 +72,6 @@ class TestSuccessRows:
                       ["nine.testrun.org", "mailchat.pl"], [], elapsed_s=5.0)
         assert "nine.testrun.org" in out
         assert "mailchat.pl" in out
-
-    def test_arrow_separator(self):
-        out = _render([_ok()], ["a.example", "b.example"], [], elapsed_s=5.0)
-        assert "->" in out
 
     def test_zero_loss(self):
         out = _render([_ok()], ["a.example", "b.example"], [], elapsed_s=5.0)
@@ -138,7 +107,7 @@ class TestSuccessRows:
 
 
 # ---------------------------------------------------------------------------
-# Table rows — failed probes
+# Table rows for failed probes.
 # ---------------------------------------------------------------------------
 
 class TestFailedRows:
@@ -178,11 +147,7 @@ class TestFailedRows:
 class TestFailureBlock:
     def test_failure_block_present_when_failures_exist(self):
         out = _render([_fail()], [], {"a.example": "timeout"}, elapsed_s=5.0)
-        assert "Failure" in out or "failure" in out.lower()
-
-    def test_no_failure_block_when_all_ok(self):
-        out = _render([_ok()], ["a.example", "b.example"], {}, elapsed_s=5.0)
-        assert "Failure" not in out or "0" in out
+        assert "failure" in out.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -254,11 +219,7 @@ class TestSummaryFooter:
         # total = alive + dead = 2 + 1 = 3
         assert "2/3" in out
 
-    def test_alive_fraction_all_alive(self):
-        out = _render([_ok()], ["a.example", "b.example"], {}, elapsed_s=5.0)
-        assert "2/2" in out
-
-    def test_footer_is_last_line(self):
+    def test_footer_contains_elapsed_on_last_line(self):
         out = _render([_ok()], ["a.example", "b.example"], {}, elapsed_s=5.0)
         last_line = out.rstrip("\n").split("\n")[-1]
-        assert "5.0s" in last_line or "Elapsed" in last_line
+        assert "5.0s" in last_line

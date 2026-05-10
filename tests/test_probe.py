@@ -1,15 +1,21 @@
 """Tests for the prober (vendored direct-ping logic)."""
 
-from unittest.mock import patch, MagicMock
+import urllib.parse
+from unittest.mock import MagicMock, patch
 
 import pytest
+from deltachat_rpc_client.rpc import JsonRpcError
 
-import urllib.parse
-
-from chatmail_prober.prober import (
-    run_probe, ProbeResult, RelayPool, PingError,
-    _classify_error, _FATAL_CATEGORIES,
-    create_qr_url, is_ip_address,
+from chatmail_prober.metrics import relay_status_value
+from chatmail_prober.probe import (
+    _FATAL_CATEGORIES,
+    AccountMaker,
+    PingError,
+    ProbeResult,
+    _classify_error,
+    create_qr_url,
+    is_ip_address,
+    run_probe,
 )
 
 
@@ -26,7 +32,7 @@ class FakePinger:
 
 
 class TestRunProbeSuccess:
-    @patch("chatmail_prober.prober._perform_direct_ping")
+    @patch("chatmail_prober.probe._perform_direct_ping")
     def test_returns_probe_result(self, mock_ping):
         mock_ping.return_value = FakePinger()
         contexts = {"a.test": MagicMock(), "b.test": MagicMock()}
@@ -40,7 +46,7 @@ class TestRunProbeSuccess:
         assert result.loss == 0.0
         assert result.error is None
 
-    @patch("chatmail_prober.prober._perform_direct_ping")
+    @patch("chatmail_prober.probe._perform_direct_ping")
     def test_rtts_extracted_from_results(self, mock_ping):
         mock_ping.return_value = FakePinger(
             results=[(0, 123.4), (1, 567.8)]
@@ -49,7 +55,7 @@ class TestRunProbeSuccess:
         result = run_probe("a.test", "b.test", count=2, relay_contexts=contexts)
         assert result.rtts_ms == [123.4, 567.8]
 
-    @patch("chatmail_prober.prober._perform_direct_ping")
+    @patch("chatmail_prober.probe._perform_direct_ping")
     def test_timing_data_propagated(self, mock_ping):
         mock_ping.return_value = FakePinger(
             account_setup_time=1.1, message_time=3.3,
@@ -61,7 +67,7 @@ class TestRunProbeSuccess:
 
 
 class TestRunProbeErrors:
-    @patch("chatmail_prober.prober._perform_direct_ping")
+    @patch("chatmail_prober.probe._perform_direct_ping")
     def test_ping_error_returns_error_result(self, mock_ping):
         mock_ping.side_effect = PingError("setup failed")
         contexts = {"a.test": MagicMock(), "b.test": MagicMock()}
@@ -73,7 +79,7 @@ class TestRunProbeErrors:
         assert result.loss == 100.0
         assert result.rtts_ms == []
 
-    @patch("chatmail_prober.prober._perform_direct_ping")
+    @patch("chatmail_prober.probe._perform_direct_ping")
     def test_unexpected_exception_returns_error_result(self, mock_ping):
         mock_ping.side_effect = RuntimeError("something broke")
         contexts = {"a.test": MagicMock(), "b.test": MagicMock()}
@@ -82,7 +88,7 @@ class TestRunProbeErrors:
         assert result.error == "something broke"
         assert result.sent == 0
 
-    @patch("chatmail_prober.prober._perform_direct_ping")
+    @patch("chatmail_prober.probe._perform_direct_ping")
     def test_error_result_preserves_source_dest(self, mock_ping):
         mock_ping.side_effect = PingError("fail")
         contexts = {"src.example": MagicMock(), "dst.example": MagicMock()}
@@ -94,7 +100,7 @@ class TestRunProbeErrors:
 
 
 class TestRunProbeWithContexts:
-    @patch("chatmail_prober.prober._perform_direct_ping")
+    @patch("chatmail_prober.probe._perform_direct_ping")
     def test_error_with_contexts(self, mock_ping):
         mock_ping.side_effect = PingError("rpc failed")
         contexts = {"a.test": MagicMock()}
@@ -102,8 +108,8 @@ class TestRunProbeWithContexts:
 
         assert result.error == "rpc failed"
 
-    @patch("chatmail_prober.prober.RelayContext")
-    @patch("chatmail_prober.prober._perform_direct_ping")
+    @patch("chatmail_prober.probe.RelayContext")
+    @patch("chatmail_prober.probe._perform_direct_ping")
     def test_without_contexts_creates_temporary(self, mock_ping, MockCtx):
         """When relay_contexts is None, creates temporary RelayContexts."""
         mock_ping.return_value = FakePinger()
@@ -111,83 +117,6 @@ class TestRunProbeWithContexts:
 
         mock_ping.assert_called_once()
         assert result.sent == 3
-
-
-class TestRelayPool:
-    @patch("chatmail_prober.prober.Rpc")
-    def test_open_all_starts_shared_rpc(self, MockRpc, tmp_path):
-        pool = RelayPool(tmp_path)
-        pool.open_all(["a.test", "b.test"])
-
-        MockRpc.assert_called_once_with(accounts_dir=tmp_path)
-        contexts = pool.contexts()
-        assert set(contexts.keys()) == {"a.test", "b.test"}
-        # All relays share the same pool as context
-        assert all(ctx is pool for ctx in contexts.values())
-
-    @patch("chatmail_prober.prober.Rpc")
-    def test_open_all_deduplicates(self, MockRpc, tmp_path):
-        pool = RelayPool(tmp_path)
-        pool.open_all(["a.test", "b.test"])
-        pool.open_all(["a.test", "c.test"])
-
-        # Only one Rpc started, relays are just tracked
-        MockRpc.assert_called_once()
-        assert set(pool.contexts().keys()) == {"a.test", "b.test", "c.test"}
-
-    @patch("chatmail_prober.prober.Rpc")
-    def test_close_clears_pool(self, MockRpc, tmp_path):
-        pool = RelayPool(tmp_path)
-        pool.open_all(["a.test"])
-        pool.close()
-
-        assert pool.contexts() == {}
-        assert pool.rpc is None
-        assert pool.maker is None
-
-    @patch("chatmail_prober.prober.Rpc")
-    def test_context_manager(self, MockRpc, tmp_path):
-        with RelayPool(tmp_path) as pool:
-            pool.open_all(["a.test"])
-            assert pool.maker is not None
-        assert pool.rpc is None
-
-    @patch("chatmail_prober.prober.Rpc")
-    def test_shared_accounts_dir(self, MockRpc, tmp_path):
-        """All relays share one accounts_dir (the pool's cache_dir)."""
-        pool = RelayPool(tmp_path)
-        pool.open_all(["relay.example"])
-
-        MockRpc.assert_called_once_with(accounts_dir=tmp_path)
-
-    @patch("chatmail_prober.prober.Rpc")
-    def test_reopen_restarts_rpc(self, MockRpc, tmp_path):
-        pool = RelayPool(tmp_path)
-        pool.open_all(["a.test"])
-        assert MockRpc.call_count == 1
-
-        pool.reopen()
-        assert MockRpc.call_count == 2
-        # Pool still serves all relays after reopen
-        assert "a.test" in pool.contexts()
-
-    @patch("chatmail_prober.prober.Rpc")
-    def test_prune_forgets_relays(self, MockRpc, tmp_path):
-        pool = RelayPool(tmp_path)
-        pool.open_all(["a.test", "b.test", "c.test"])
-        pool.prune(["a.test", "c.test"])
-
-        assert set(pool.contexts().keys()) == {"a.test", "c.test"}
-
-    @patch("chatmail_prober.prober.Rpc")
-    def test_pool_has_maker_attribute(self, MockRpc, tmp_path):
-        """Pool duck-types as relay context for _perform_direct_ping."""
-        pool = RelayPool(tmp_path)
-        pool.open_all(["a.test"])
-
-        assert pool.maker is not None
-        ctx = pool.contexts()["a.test"]
-        assert ctx.maker is pool.maker
 
 
 class TestFatalCategories:
@@ -217,19 +146,15 @@ class TestFatalCategories:
 # -- Tests merged from test_ip_relay.py --
 
 
-class TestIsIpAddress:
-    def test_ipv4_detected(self):
-        assert is_ip_address("192.168.1.1") is True
-
-    def test_ipv6_detected(self):
-        assert is_ip_address("::1") is True
-        assert is_ip_address("2001:db8::1") is True
-
-    def test_domain_not_ip(self):
-        assert is_ip_address("nine.testrun.org") is False
-
-    def test_empty_string_not_ip(self):
-        assert is_ip_address("") is False
+@pytest.mark.parametrize(("host", "expected"), [
+    ("192.168.1.1", True),
+    ("::1", True),
+    ("2001:db8::1", True),
+    ("nine.testrun.org", False),
+    ("", False),
+])
+def test_is_ip_address(host, expected):
+    assert is_ip_address(host) is expected
 
 
 class TestCreateQrUrl:
@@ -247,3 +172,103 @@ class TestCreateQrUrl:
         assert "p" in qs
         assert "ip" in qs
         assert "sp" in qs
+
+
+# ---------------------------------------------------------------------------
+# RPC-level setup error handling: inject real JsonRpcError instances using
+# the exact message strings produced by chatmail/core's Rust network layer
+# and verify run_probe surfaces them with the right relay_status_value code.
+#
+# Error string origins (chatmail/core):
+#   DNS:     src/net/dns.rs   "Could not find DNS resolutions for {host}:{port}..."
+#   Auth:    src/stock_str.rs + IMAP server "[AUTHENTICATIONFAILED]"
+#   Timeout: src/net.rs       tokio::time::timeout -> "Connection timeout: deadline has elapsed"
+# ---------------------------------------------------------------------------
+
+
+def _dns_error(host: str = "imap.host.abc", port: int = 993) -> JsonRpcError:
+    return JsonRpcError({
+        "code": -1,
+        "message": (
+            f'Error:\n\n"IMAP failed to connect to {host}:{port}:tls: '
+            f"Could not find DNS resolutions for {host}:{port}. "
+            'Check server hostname and your network"'
+        ),
+    })
+
+
+def _auth_error(addr: str = "wjfjpcxib@hostb.xyz") -> JsonRpcError:
+    return JsonRpcError({
+        "code": -1,
+        "message": (
+            f'Error:\n\n"Cannot login as "{addr}". '
+            "Please check if the email address and the password are correct. "
+            '(no response: code: None, info: Some("[AUTHENTICATIONFAILED] Authentication failed."))"'
+        ),
+    })
+
+
+def _timeout_error(host: str = "hostd.xyz") -> JsonRpcError:
+    return JsonRpcError({
+        "code": -1,
+        "message": (
+            f'Error:\n\n"IMAP failed to connect to {host}:993:tls: '
+            'Connection timeout: deadline has elapsed"'
+        ),
+    })
+
+
+@pytest.fixture()
+def mock_relay_contexts():
+    """Factory: returns a contexts dict whose AccountMaker.dc.add_account()
+    raises the supplied exception, simulating a failure during account setup
+    (set_config_from_qr -> start_io -> configure)."""
+    def _make(exc: Exception):
+        class _FakeDC:
+            def get_all_accounts(self):
+                return []
+
+            def add_account(self):
+                raise exc
+
+        maker = AccountMaker(_FakeDC())
+
+        class _Ctx:
+            def __init__(self):
+                self.maker = maker
+
+        return {"src.example": _Ctx(), "dst.example": _Ctx()}
+
+    return _make
+
+
+@pytest.mark.parametrize(("error_factory", "expected_status"), [
+    (_dns_error, -6),
+    (_auth_error, -3),
+    (_timeout_error, -1),
+])
+def test_run_probe_classifies_rpc_setup_error(
+    mock_relay_contexts, error_factory, expected_status,
+):
+    contexts = mock_relay_contexts(error_factory())
+    result = run_probe(
+        "src.example", "dst.example",
+        count=1, relay_contexts=contexts,
+    )
+    assert relay_status_value(result.error) == expected_status, (
+        f"Expected status {expected_status}, got "
+        f"{relay_status_value(result.error)!r} for error: {result.error!r}"
+    )
+
+
+def test_self_loop_surfaces_rpc_error(mock_relay_contexts):
+    """Self-loop probes (src==dst) must also surface errors correctly."""
+    contexts = mock_relay_contexts(_dns_error("imap.self.example"))
+    contexts["self.example"] = contexts.pop("src.example")
+    contexts.pop("dst.example", None)
+    result = run_probe(
+        "self.example", "self.example",
+        count=1, relay_contexts=contexts,
+    )
+    assert result.error is not None
+    assert relay_status_value(result.error) == -6

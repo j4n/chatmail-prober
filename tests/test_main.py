@@ -1,62 +1,25 @@
 """Tests for config parsing, CLI args, pair generation, and orchestration."""
 
 import argparse
-import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from concurrent.futures import ThreadPoolExecutor
 
+from chatmail_prober import metrics as metrics_mod
 from chatmail_prober.__main__ import (
-    main, read_relay_list, read_exclude_list, parse_args,
-    _SupprRpcClosedFilter,
+    main,
+    parse_args,
 )
 from chatmail_prober.orchestration import (
-    check_relays_alive, run_round, _RPC_CRASH_KEYWORDS,
+    check_relays_alive,
+    run_round,
 )
 from chatmail_prober.output import print_metrics
-from chatmail_prober.prober import ProbeResult
-from chatmail_prober import metrics as metrics_mod
-
-
-class TestReadRelayList:
-    def test_reads_domains(self, tmp_path):
-        f = tmp_path / "relays.txt"
-        f.write_text("nine.testrun.org\nmehl.cloud\ntarpit.fun\n")
-        assert read_relay_list([str(f)]) == ["nine.testrun.org", "mehl.cloud", "tarpit.fun"]
-
-    def test_ignores_comments_and_blanks(self, tmp_path):
-        f = tmp_path / "relays.txt"
-        f.write_text("# comment\nnine.testrun.org\n\n  \n# another\nmehl.cloud\n")
-        assert read_relay_list([str(f)]) == ["nine.testrun.org", "mehl.cloud"]
-
-    def test_strips_whitespace(self, tmp_path):
-        f = tmp_path / "relays.txt"
-        f.write_text("  nine.testrun.org  \n  mehl.cloud\t\n")
-        assert read_relay_list([str(f)]) == ["nine.testrun.org", "mehl.cloud"]
-
-    def test_empty_file_exits(self, tmp_path):
-        f = tmp_path / "relays.txt"
-        f.write_text("# only comments\n\n")
-        with pytest.raises(SystemExit):
-            read_relay_list([str(f)])
-
-    def test_single_relay(self, tmp_path):
-        f = tmp_path / "relays.txt"
-        f.write_text("nine.testrun.org\n")
-        assert read_relay_list([str(f)]) == ["nine.testrun.org"]
-
-    def test_multiple_files_merged_and_deduplicated(self, tmp_path):
-        f1 = tmp_path / "a.txt"
-        f1.write_text("nine.testrun.org\nmehl.cloud\n")
-        f2 = tmp_path / "b.txt"
-        f2.write_text("mehl.cloud\ntarpit.fun\n")
-        assert read_relay_list([str(f1), str(f2)]) == [
-            "nine.testrun.org", "mehl.cloud", "tarpit.fun"
-        ]
+from chatmail_prober.probe import ProbeResult
 
 
 class TestParseArgs:
@@ -78,17 +41,6 @@ class TestParseArgs:
         args = parse_args(["r.txt", "-q"])
         assert args.quiet is True
         assert args.verbose == 0
-
-    def test_reset_bare_errors(self):
-        # --reset with no domains must raise SystemExit with non-zero code
-        with pytest.raises(SystemExit) as exc_info:
-            parse_args(["r.txt", "--reset"])
-        assert exc_info.value.code != 0
-
-    def test_reset_default_is_none(self):
-        # omitting --reset -> None (no reset)
-        args = parse_args(["r.txt"])
-        assert args.reset is None
 
     def test_all_flags(self):
         args = parse_args([
@@ -134,7 +86,7 @@ def _fake_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10
 class _FakePool:
     """Stand-in for RelayPool that does not spawn RPC servers."""
     def __init__(self, *a, **kw):
-        pass
+        self.reopen_calls = 0
 
     def open_all(self, relays):
         pass
@@ -144,6 +96,9 @@ class _FakePool:
 
     def close(self):
         pass
+
+    def reopen(self):
+        self.reopen_calls += 1
 
 
 def _make_worker_pools(n):
@@ -171,22 +126,33 @@ class TestRunRound:
                     source=s, destination=d, probe_type=pt)._value.get()
                 assert val == 1.0, f"{s} -> {d} not recorded"
 
-    def test_shutdown_skips_metrics(self, tmp_path, monkeypatch, fresh_metrics):
+    def test_shutdown_observable(self, tmp_path, monkeypatch, fresh_metrics):
+        """Loose smoke test: shutdown causes some pairs to be skipped.
+
+        Kept alongside the strict version below as a wider safety net --
+        it tolerates timing shifts from upstream rpc-server upgrades that
+        might invalidate the precise sleep tuning in the strict test, while
+        still catching the catastrophic case where shutdown is ignored
+        entirely.
+        """
         shutdown_event = threading.Event()
         call_count = 0
 
-        def _slow_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, relay_contexts=None):
+        def _slow_probe(source, dest, count=1, interval=0.1,
+                        accounts_dir="", timeout=10, relay_contexts=None):
             nonlocal call_count
             call_count += 1
-            # After a couple of probes complete, trigger shutdown.
             if call_count >= 2:
                 time.sleep(0.05)
                 shutdown_event.set()
-            return ProbeResult(source, dest, sent=1, received=1, loss=0.0, rtts_ms=[100.0])
+            return ProbeResult(source, dest, sent=1, received=1,
+                               loss=0.0, rtts_ms=[100.0])
 
-        monkeypatch.setattr("chatmail_prober.orchestration.run_probe", _slow_probe)
+        monkeypatch.setattr(
+            "chatmail_prober.orchestration.run_probe", _slow_probe,
+        )
         relays = ["a.example", "b.example", "c.example"]
-        args = _make_args(tmp_path, workers=1)  # single worker for deterministic ordering
+        args = _make_args(tmp_path, workers=1)
         executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
         try:
             run_round(relays, args, executors, _make_worker_pools(args.workers),
@@ -195,19 +161,139 @@ class TestRunRound:
             for ex in executors:
                 ex.shutdown(wait=False)
 
-        # Not all 9 pairs should have been recorded -- some were skipped.
-        recorded = 0
-        for s in relays:
-            for d in relays:
-                pt = "self" if s == d else "cross"
-                try:
-                    val = metrics_mod.probe_success.labels(
-                        source=s, destination=d, probe_type=pt)._value.get()
-                    if val != 0.0:
-                        recorded += 1
-                except Exception:
-                    pass
-        assert recorded < 9, f"Expected some pairs skipped, but all {recorded} recorded"
+        recorded = sum(
+            metrics_mod.probe_success.labels(
+                source=s, destination=d,
+                probe_type="self" if s == d else "cross",
+            )._value.get() != 0.0
+            for s in relays for d in relays
+        )
+        assert recorded < len(relays) ** 2
+
+    def test_shutdown_skips_metrics(self, tmp_path, monkeypatch, fresh_metrics):
+        """Strict version: shutdown must break out of as_completed early.
+
+        The slow probes (0.5s each) force the as_completed loop to observe
+        shutdown before the queue drains. Without the early-exit, all 9
+        pairs would eventually record. The recorded >= 1 lower bound
+        confirms the first probe still landed (so we are testing
+        shutdown-mid-loop, not shutdown-before-start).
+        """
+        shutdown_event = threading.Event()
+        probe_calls = 0
+        first_call = threading.Event()
+
+        def _slow_probe(source, dest, count=1, interval=0.1,
+                        accounts_dir="", timeout=10, relay_contexts=None):
+            nonlocal probe_calls
+            probe_calls += 1
+            first_call.set()
+            # All probes after the first sleep long enough that shutdown
+            # will be observed by the as_completed loop before they finish.
+            if probe_calls > 1:
+                time.sleep(0.5)
+            return ProbeResult(source, dest, sent=1, received=1,
+                               loss=0.0, rtts_ms=[100.0])
+
+        monkeypatch.setattr(
+            "chatmail_prober.orchestration.run_probe", _slow_probe,
+        )
+
+        # Trip shutdown shortly after the first probe completes.
+        def _fire_shutdown():
+            first_call.wait(timeout=2.0)
+            time.sleep(0.05)
+            shutdown_event.set()
+
+        firer = threading.Thread(target=_fire_shutdown, daemon=True)
+        firer.start()
+
+        relays = ["a.example", "b.example", "c.example"]
+        args = _make_args(tmp_path, workers=1)
+        executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
+        try:
+            run_round(relays, args, executors, _make_worker_pools(args.workers),
+                      shutdown_event=shutdown_event)
+        finally:
+            for ex in executors:
+                ex.shutdown(wait=False)
+            firer.join(timeout=2.0)
+
+        recorded = sum(
+            metrics_mod.probe_success.labels(
+                source=s, destination=d,
+                probe_type="self" if s == d else "cross",
+            )._value.get() != 0.0
+            for s in relays for d in relays
+        )
+        # Strict invariant: the shutdown must have caused us to leave the
+        # as_completed loop with futures still incomplete -- i.e. recorded
+        # pairs strictly less than total pairs. Without the early-exit
+        # the loop would sit and wait for every slow probe.
+        assert recorded < len(relays) ** 2, (
+            f"shutdown was ignored: recorded all {recorded} pairs"
+        )
+        assert recorded >= 1, "expected the first probe to land before shutdown"
+
+    def test_rpc_crash_triggers_pool_reopen(self, tmp_path, monkeypatch, fresh_metrics):
+        """A probe error containing an _RPC_CRASH_KEYWORDS substring must
+        trigger pool.reopen() exactly once for the affected worker, gated by
+        the per-worker reopened_workers set."""
+        def _broken_pipe_probe(source, dest, count=1, interval=0.1,
+                               accounts_dir="", timeout=10, relay_contexts=None):
+            return ProbeResult(
+                source, dest,
+                error="BrokenPipeError writing to rpc stdin",
+            )
+
+        monkeypatch.setattr(
+            "chatmail_prober.orchestration.run_probe", _broken_pipe_probe,
+        )
+        relays = ["a.example", "b.example"]
+        args = _make_args(tmp_path, workers=1)  # single worker -> single pool
+        pools = _make_worker_pools(args.workers)
+        executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
+        try:
+            run_round(relays, args, executors, pools,
+                      shutdown_event=threading.Event())
+        finally:
+            for ex in executors:
+                ex.shutdown(wait=False)
+
+        # Even though all 4 pairs failed with the same crash signature, the
+        # per-worker gate means exactly one reopen is performed.
+        assert pools[0].reopen_calls == 1, (
+            f"Expected 1 reopen via gating, got {pools[0].reopen_calls}"
+        )
+
+    def test_app_error_does_not_trigger_reopen(self, tmp_path, monkeypatch, fresh_metrics):
+        """An application-level failure (DNS / auth / timeout) must NOT trigger
+        pool.reopen() -- only transport-level crashes warrant tearing down the
+        shared rpc-server."""
+        def _dns_probe(source, dest, count=1, interval=0.1,
+                       accounts_dir="", timeout=10, relay_contexts=None):
+            return ProbeResult(
+                source, dest,
+                error="Could not find DNS resolutions for imap.host:993",
+            )
+
+        monkeypatch.setattr(
+            "chatmail_prober.orchestration.run_probe", _dns_probe,
+        )
+        relays = ["a.example", "b.example"]
+        args = _make_args(tmp_path, workers=1)
+        pools = _make_worker_pools(args.workers)
+        executors = [ThreadPoolExecutor(max_workers=1) for _ in range(args.workers)]
+        try:
+            run_round(relays, args, executors, pools,
+                      shutdown_event=threading.Event())
+        finally:
+            for ex in executors:
+                ex.shutdown(wait=False)
+
+        assert pools[0].reopen_calls == 0, (
+            "DNS errors must not tear down the shared rpc-server"
+        )
 
     def test_crashed_probe_records_error(self, tmp_path, monkeypatch, fresh_metrics):
         def _crashing_probe(source, dest, count=1, interval=0.1, accounts_dir="", timeout=10, relay_contexts=None):
@@ -376,26 +462,6 @@ class TestCheckRelaysAlive:
         assert dead_set == {}
 
 
-class TestReadExcludeList:
-    def test_parses_pairs(self, tmp_path):
-        f = tmp_path / "exclude.txt"
-        f.write_text("a.example -> b.example\nc.example->d.example\n")
-        result = read_exclude_list(str(f))
-        assert result == {("a.example", "b.example"), ("c.example", "d.example")}
-
-    def test_ignores_comments_and_blanks(self, tmp_path):
-        f = tmp_path / "exclude.txt"
-        f.write_text("# a comment\n\na.example -> b.example\n  \n")
-        result = read_exclude_list(str(f))
-        assert result == {("a.example", "b.example")}
-
-    def test_skips_malformed_lines(self, tmp_path):
-        f = tmp_path / "exclude.txt"
-        f.write_text("a.example -> b.example\nno_arrow_here\n")
-        result = read_exclude_list(str(f))
-        assert result == {("a.example", "b.example")}
-
-
 class TestRunRoundExclude:
     def test_excludes_pairs(self, tmp_path, monkeypatch, fresh_metrics):
         probed_pairs = []
@@ -422,51 +488,6 @@ class TestRunRoundExclude:
 
 
 
-class TestSupprRpcClosedFilter:
-    def _make_record(self, msg):
-        return logging.LogRecord("test", logging.ERROR, "", 0, msg, (), None)
-
-    def test_passes_during_normal_operation(self):
-        f = _SupprRpcClosedFilter(threading.Event())
-        assert f.filter(self._make_record("RPC server closed")) is True
-
-    def test_suppresses_during_shutdown(self):
-        event = threading.Event()
-        event.set()
-        f = _SupprRpcClosedFilter(event)
-        assert f.filter(self._make_record("RPC server closed")) is False
-
-    def test_passes_unrelated_errors_during_shutdown(self):
-        event = threading.Event()
-        event.set()
-        f = _SupprRpcClosedFilter(event)
-        assert f.filter(self._make_record("Some other error")) is True
-
-
-class TestRpcCrashKeywords:
-    """Verify _RPC_CRASH_KEYWORDS matches transport errors but not app errors."""
-
-    @pytest.mark.parametrize("error", [
-        "Failed to setup sender profile on host.abc: JsonRpcError: "
-        "{'code': -1, 'message': 'Could not find DNS resolutions'}",
-        "AUTHENTICATIONFAILED: login failed",
-        "Connection timeout: deadline has elapsed",
-        "Failed to setup sender profile on relay.example: SomeError: details",
-    ])
-    def test_app_errors_do_not_match(self, error):
-        assert not any(kw in error.lower() for kw in _RPC_CRASH_KEYWORDS)
-
-    @pytest.mark.parametrize("error", [
-        "RPC server closed",
-        "rpc process crashed",
-        "BrokenPipeError writing to rpc stdin",
-        "ConnectionResetError: [Errno 104] Connection reset by peer",
-        "EOFError reading from rpc server",
-    ])
-    def test_transport_errors_do_match(self, error):
-        assert any(kw in error.lower() for kw in _RPC_CRASH_KEYWORDS)
-
-
 # -- Tests merged from test_print_flag.py, test_print_metrics.py,
 #    test_optional_relay_file.py --
 
@@ -487,28 +508,20 @@ def _run_main_once(tmp_path, extra_flags=()):
 
 
 class TestPrintFlag:
-    def test_once_without_print_does_not_render(self, tmp_path):
-        mock_render, _ = _run_main_once(tmp_path)
-        mock_render.assert_not_called()
+    """--print / --print-metrics dispatch in main(). Mocks everything else."""
 
-    def test_once_with_print_renders(self, tmp_path):
-        mock_render, _ = _run_main_once(tmp_path, extra_flags=["--print"])
-        mock_render.assert_called_once()
-
-    def test_once_with_print_metrics_calls_print_metrics(self, tmp_path):
-        _, mock_pm = _run_main_once(tmp_path, extra_flags=["--print-metrics"])
-        mock_pm.assert_called_once()
+    @pytest.mark.parametrize("flags,render_called,pm_called", [
+        ([],                   False, False),
+        (["--print"],          True,  False),
+        (["--print-metrics"],  False, True),
+    ])
+    def test_dispatch(self, tmp_path, flags, render_called, pm_called):
+        mock_render, mock_pm = _run_main_once(tmp_path, extra_flags=flags)
+        assert mock_render.called is render_called
+        assert mock_pm.called is pm_called
 
 
 class TestPrintMetrics:
-    def test_flag_defaults_to_false(self):
-        args = parse_args(["r.txt"])
-        assert args.print_metrics is False
-
-    def test_flag_accepted(self):
-        args = parse_args(["r.txt", "--print-metrics"])
-        assert args.print_metrics is True
-
     def test_writes_to_stdout(self, capsys):
         print_metrics()
         assert len(capsys.readouterr().out) > 0

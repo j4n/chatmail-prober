@@ -6,83 +6,51 @@ import tempfile
 
 import pytest
 
-from chatmail_prober.__main__ import parse_args
-
+from chatmail_prober.__main__ import _bracket_ipv6, parse_args
 
 # ---------------------------------------------------------------------------
 # --hosts / -H
 # ---------------------------------------------------------------------------
 
+@pytest.fixture()
+def relay_file(tmp_path):
+    f = tmp_path / "r.txt"
+    f.write_text("nine.testrun.org\n")
+    return str(f)
+
+
 class TestHostsFlag:
-    def test_long_form_accepted(self, tmp_path):
-        relay_file = tmp_path / "r.txt"
-        relay_file.write_text("nine.testrun.org\n")
-        args = parse_args([str(relay_file), "--hosts", "a.example,b.example"])
-        assert args.hosts == "a.example,b.example"
+    @pytest.mark.parametrize("flag", ["--hosts", "-H"])
+    @pytest.mark.parametrize("value", ["a.example", "a.example,b.example",
+                                       " a.example , b.example "])
+    def test_hosts_flag_stores_raw_value(self, relay_file, flag, value):
+        args = parse_args([relay_file, flag, value])
+        # Whitespace trimming happens in main(), not parse_args; the raw
+        # string is preserved on args.
+        assert args.hosts == value
 
-    def test_short_form_accepted(self, tmp_path):
-        relay_file = tmp_path / "r.txt"
-        relay_file.write_text("nine.testrun.org\n")
-        args = parse_args([str(relay_file), "-H", "a.example,b.example"])
-        assert args.hosts == "a.example,b.example"
-
-    def test_defaults_to_none(self, tmp_path):
-        relay_file = tmp_path / "r.txt"
-        relay_file.write_text("nine.testrun.org\n")
-        args = parse_args([str(relay_file)])
+    def test_defaults_to_none(self, relay_file):
+        args = parse_args([relay_file])
         assert args.hosts is None
-
-    def test_single_host(self, tmp_path):
-        relay_file = tmp_path / "r.txt"
-        relay_file.write_text("nine.testrun.org\n")
-        args = parse_args([str(relay_file), "--hosts", "a.example"])
-        assert args.hosts == "a.example"
-
-    def test_whitespace_in_value_preserved(self, tmp_path):
-        """Whitespace trimming happens in main(), not in parse_args."""
-        relay_file = tmp_path / "r.txt"
-        relay_file.write_text("nine.testrun.org\n")
-        args = parse_args([str(relay_file), "--hosts", " a.example , b.example "])
-        assert "a.example" in args.hosts
-        assert "b.example" in args.hosts
 
 
 # ---------------------------------------------------------------------------
 # IPv6 auto-bracketing
 # ---------------------------------------------------------------------------
 
-class TestIPv6Bracketing:
-    """_bracket_ipv6(host) must wrap bare IPv6 addresses in square brackets."""
-
-    def _bracket(self, host: str) -> str:
-        from chatmail_prober.__main__ import _bracket_ipv6
-        return _bracket_ipv6(host)
-
-    def test_bare_ipv6_gets_brackets(self):
-        assert self._bracket("::1") == "[::1]"
-
-    def test_full_ipv6_gets_brackets(self):
-        assert self._bracket("2001:db8::1") == "[2001:db8::1]"
-
-    def test_already_bracketed_unchanged(self):
-        assert self._bracket("[::1]") == "[::1]"
-
-    def test_ipv4_unchanged(self):
-        assert self._bracket("192.168.1.1") == "192.168.1.1"
-
-    def test_hostname_unchanged(self):
-        assert self._bracket("nine.testrun.org") == "nine.testrun.org"
-
-    def test_hosts_flag_stores_raw_string(self, tmp_path):
-        """args.hosts stores the raw comma string; bracketing happens in main()."""
-        relay_file = tmp_path / "r.txt"
-        relay_file.write_text("nine.testrun.org\n")
-        args = parse_args([str(relay_file), "-H", "::1,nine.testrun.org"])
-        assert "::1" in args.hosts
+@pytest.mark.parametrize(("host", "expected"), [
+    ("::1", "[::1]"),
+    ("2001:db8::1", "[2001:db8::1]"),
+    ("[::1]", "[::1]"),
+    ("192.168.1.1", "192.168.1.1"),
+    ("nine.testrun.org", "nine.testrun.org"),
+])
+def test_bracket_ipv6(host, expected):
+    assert _bracket_ipv6(host) == expected
 
 
 # ---------------------------------------------------------------------------
-# Short flag aliases — one round-trip test covers all aliases
+# Short flag aliases. One round-trip test covers all of them.
 # ---------------------------------------------------------------------------
 
 class TestShortAliases:

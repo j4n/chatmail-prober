@@ -1,4 +1,4 @@
-.PHONY: install install-dev test clean
+.PHONY: install install-dev test test-live lint typecheck format check clean
 
 # uv manages the venv and lockfile; scripts in .venv/bin/ get shebangs
 # pointing to the local Python, so the venv must be created on the machine
@@ -22,5 +22,19 @@ install-dev: $(UV)
 test:
 	$(UV) run python -m pytest tests/ --ignore=tests/test_live.py
 
+test-live:
+	$(UV) run python -m pytest tests/test_live.py
+
+lint:
+	$(UV) run ruff check chatmail_prober tests
+
+format:
+	$(UV) run ruff format chatmail_prober tests
+
+typecheck:
+	$(UV) run mypy chatmail_prober
+
+check: lint typecheck test
+
 clean:
-	rm -rf .venv *.egg-info dist
+	rm -rf .venv *.egg-info dist .mypy_cache .ruff_cache .pytest_cache

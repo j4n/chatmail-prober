@@ -1,4 +1,4 @@
-"""cli_summary — compact table summary for --print / --once mode.
+"""Compact table summary for --print and --once modes.
 
 Renders a human-readable table to *out* (default: sys.stdout) after a
 single probe round completes.  Each probe pair occupies one row::
@@ -22,7 +22,7 @@ import sys
 from collections import defaultdict
 from typing import IO, Mapping, Sequence
 
-from chatmail_prober.prober import ProbeResult, _classify_error
+from chatmail_prober.probe import ProbeResult, _classify_error
 
 # Column widths (characters).  Route column is computed dynamically.
 _W_SENT  = 5
@@ -77,8 +77,7 @@ def render(
     failed_results = [r for r in results if r.error is not None]
 
     route_strs = [f"{r.source} -> {r.destination}" for r in results]
-    route_w = max((len(s) for s in route_strs), default=5)
-    route_w = max(route_w, len("Route"))
+    route_w = max(len("Route"), 5, *(len(s) for s in route_strs))
 
     header = (
         f"{'Route':<{route_w}}"
@@ -138,8 +137,7 @@ def render(
 
     if dead_relays:
         # Compute column widths dynamically.
-        host_w = max(len(h) for h in dead_relays)
-        host_w = max(host_w, len("Host"))
+        host_w = max(len("Host"), *(len(h) for h in dead_relays))
 
         # Truncate the message column to fill the terminal width.
         # Fixed columns: host_w + 2 + _W_ERR_CAT + 2 + len("Message") header.
@@ -158,12 +156,8 @@ def render(
             out.write(f"{host:<{host_w}}  {category:<{_W_ERR_CAT}}  {message}\n")
         out.write("\n")
 
-    total_relays = len(alive_relays) + len(dead_relays)
-    alive_n      = len(alive_relays)
-    total_probes = len(results)
-    ok_cnt       = len(ok_results)
     out.write(
-        f"Alive: {alive_n}/{total_relays}"
-        f"  Probes: {ok_cnt}/{total_probes} ok"
+        f"Alive: {len(alive_relays)}/{len(alive_relays) + len(dead_relays)}"
+        f"  Probes: {len(ok_results)}/{len(results)} ok"
         f"  Elapsed: {elapsed_s:.1f}s\n"
     )

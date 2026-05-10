@@ -13,12 +13,10 @@ the new code only cares about top-level pool dirs):
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 from chatmail_prober.__main__ import parse_args, reset_accounts
-
 
 # ---------------------------------------------------------------------------
 # Helpers

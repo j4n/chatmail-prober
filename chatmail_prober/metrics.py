@@ -6,22 +6,28 @@ import logging
 import socket
 import statistics
 import subprocess
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .prober import ProbeResult
-
-from .prober import _classify_error
+    from .probe import ProbeResult
 
 from prometheus_client import (
-    CollectorRegistry, Counter, Gauge, REGISTRY,
+    CollectorRegistry,
+    Counter,
+    Gauge,
     disable_created_metrics,
 )
+
+from .probe import _classify_error
 
 # Suppress the _created timestamp lines added by prometheus_client for each
 # counter and histogram series -- they double the textfile size and are not
 # useful for node_exporter's textfile collector.
-disable_created_metrics()
+# prometheus-client ships py.typed but disable_created_metrics() itself is
+# unannotated upstream.  Single inline ignore is cleaner than scattering
+# Any-casts; remove if/when prometheus-client tightens its annotations.
+disable_created_metrics()  # type: ignore[no-untyped-call]
 
 log = logging.getLogger(__name__)
 
@@ -135,6 +141,15 @@ relay_connections = Gauge(
 )
 
 
+def _drop_labels(
+    metric: Any, keep: Callable[[tuple[str, ...]], bool]
+) -> None:
+    """Remove label sets where keep(label_tuple) is False."""
+    for label_values in list(metric._metrics.keys()):
+        if not keep(label_values):
+            metric.remove(*label_values)
+
+
 def clear_stale_labels(active_relays: list[str]) -> None:
     """Remove label sets for relays no longer in the active set.
 
@@ -149,10 +164,7 @@ def clear_stale_labels(active_relays: list[str]) -> None:
     ]
     active = set(active_relays)
     for metric in all_metrics:
-        for label_values in list(metric._metrics.keys()):
-            src, dst, _ = label_values
-            if src not in active or dst not in active:
-                metric.remove(*label_values)
+        _drop_labels(metric, lambda lv: lv[0] in active and lv[1] in active)
 
 
 _CATEGORY_TO_STATUS: dict[str | None, int] = {
@@ -231,9 +243,7 @@ def clear_stale_relay_labels(configured_relays: list[str]) -> None:
     """Remove per-relay label sets for relays no longer in the configured list."""
     active = set(configured_relays)
     for metric in (relay_status, account_creations_total, relay_connections):
-        for (relay,) in list(metric._metrics.keys()):
-            if relay not in active:
-                metric.remove(relay)
+        _drop_labels(metric, lambda lv: lv[0] in active)
 
 
 def sample_relay_connections(relays: list[str]) -> None:
@@ -244,9 +254,10 @@ def sample_relay_connections(relays: list[str]) -> None:
             ip = socket.getaddrinfo(relay, 993)[0][4][0]
             result = subprocess.run(
                 ["ss", "-tn", f"dst {ip}"],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=5,
+                check=False,
             )
-            conn_count = len([l for l in result.stdout.split("\n") if l.strip()])
+            conn_count = sum(1 for l in result.stdout.splitlines() if l.strip())
             conn_count = max(0, conn_count - 1)  # subtract header
             relay_connections.labels(relay=relay).set(conn_count)
         except Exception as e:
@@ -254,11 +265,28 @@ def sample_relay_connections(relays: list[str]) -> None:
             relay_connections.labels(relay=relay).set(0)
 
 
+def _set_rtt_metrics(labels: dict[str, str], rtt_s: list[float]) -> None:
+    """Set median/p10/p90/stddev gauges from a non-empty RTT sample (seconds)."""
+    if len(rtt_s) >= 2:
+        # quantiles(n=10, method="inclusive") returns 9 cut points;
+        # index 0 = p10, index 8 = p90.  "inclusive" interpolates within
+        # the data range (exclusive can extrapolate beyond min/max).
+        deciles = statistics.quantiles(rtt_s, n=10, method="inclusive")
+        p10, p90, stddev = deciles[0], deciles[-1], statistics.stdev(rtt_s)
+    else:
+        p10 = p90 = rtt_s[0]
+        stddev = 0.0
+    rtt_median.labels(**labels).set(statistics.median(rtt_s))
+    rtt_p10.labels(**labels).set(p10)
+    rtt_p90.labels(**labels).set(p90)
+    rtt_stddev.labels(**labels).set(stddev)
+
+
 def update_metrics(result: ProbeResult) -> None:
     """Update Prometheus metrics from a ProbeResult."""
     probe_type = "self" if result.source == result.destination else "cross"
-    labels = dict(source=result.source, destination=result.destination,
-                  probe_type=probe_type)
+    labels: dict[str, str] = dict(source=result.source, destination=result.destination,
+                                  probe_type=probe_type)
 
     if result.error:
         send_errors_total.labels(**labels).inc()
@@ -285,17 +313,4 @@ def update_metrics(result: ProbeResult) -> None:
     account_setup_seconds.labels(**labels).set(result.account_setup_time)
 
     if result.rtts_ms:
-        rtt_s = [r / 1000.0 for r in result.rtts_ms]
-        rtt_median.labels(**labels).set(statistics.median(rtt_s))
-        if len(rtt_s) >= 2:
-            # quantiles(n=10, method="inclusive") returns 9 cut points;
-            # index 0 = p10, index 8 = p90.  "inclusive" interpolates within
-            # the data range (exclusive can extrapolate beyond min/max).
-            deciles = statistics.quantiles(rtt_s, n=10, method="inclusive")
-            rtt_p10.labels(**labels).set(deciles[0])
-            rtt_p90.labels(**labels).set(deciles[-1])
-            rtt_stddev.labels(**labels).set(statistics.stdev(rtt_s))
-        else:
-            rtt_p10.labels(**labels).set(rtt_s[0])
-            rtt_p90.labels(**labels).set(rtt_s[0])
-            rtt_stddev.labels(**labels).set(0.0)
+        _set_rtt_metrics(labels, [r / 1000.0 for r in result.rtts_ms])
