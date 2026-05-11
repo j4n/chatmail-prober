@@ -151,7 +151,8 @@ def _check_one_turn(
     update_turn_metrics(relay, result)
     log.info("turn_check_done", relay=relay, endpoint=resolved[4],
              status=int(result.status_code),
-             rtt_avg_s=result.run.rtt_avg_s)
+             connect_s=result.run.connect_s,
+             transmit_s=result.run.transmit_s)
 
 
 def _check_one_iroh(

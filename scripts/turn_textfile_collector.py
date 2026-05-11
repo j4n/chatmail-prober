@@ -46,25 +46,10 @@ def build_registry() -> CollectorRegistry:
     scalars = (
         ("turn_connect_time_seconds",  "Time to establish the TURN connection", run.connect_s),
         ("turn_transmit_time_seconds", "Total relay test duration",             run.transmit_s),
-        ("turn_lost_packets_total",    "Lost packets during relay test",        run.lost_packets),
-        ("turn_send_dropped_total",    "Send-dropped packets during relay test", run.send_dropped),
     )
     for name, help_text, value in scalars:
         if value is not None:
             Gauge(name, help_text, labels, registry=reg).labels(**base).set(value)
-
-    for name, help_text, triple in (
-        ("turn_rtt_seconds",    "Round-trip delay in seconds",
-         (run.rtt_avg_s, run.rtt_min_s, run.rtt_max_s)),
-        ("turn_jitter_seconds", "Jitter in seconds",
-         (run.jitter_avg_s, run.jitter_min_s, run.jitter_max_s)),
-    ):
-        if triple[0] is None:
-            continue
-        g = Gauge(name, help_text, [*labels, "quantile"], registry=reg)
-        for q, v in zip(("avg", "min", "max"), triple):
-            if v is not None:
-                g.labels(**base, quantile=q).set(v)
     return reg
 
 

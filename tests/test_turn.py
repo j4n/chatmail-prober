@@ -103,22 +103,13 @@ def test_parse_uclient_output_normalizes_ms_to_seconds():
     assert run.returncode == 0
     assert run.connect_s == pytest.approx(0.001)
     assert run.transmit_s == pytest.approx(0.005)
-    assert run.lost_packets == 0
-    assert run.send_dropped == 2
-    assert run.rtt_avg_s == pytest.approx(0.0125)
-    assert run.rtt_min_s == pytest.approx(0.008)
-    assert run.rtt_max_s == pytest.approx(0.017)
-    assert run.jitter_avg_s == pytest.approx(0.00125)
-    assert run.jitter_min_s == pytest.approx(0.0)
-    assert run.jitter_max_s == pytest.approx(0.003)
 
 
 def test_parse_uclient_output_handles_missing_fields():
     run = parse_uclient_output("nothing matches", "", 1)
     assert run.ok is False
     assert run.connect_s is None
-    assert run.rtt_avg_s is None
-    assert run.lost_packets is None
+    assert run.transmit_s is None
 
 
 def test_run_uclient_binary_missing(monkeypatch):
@@ -144,7 +135,7 @@ def test_run_uclient_dispatches_parser(monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: proc)
     run = run_uclient("h", 3478, "u", "p")
     assert run.ok is True
-    assert run.rtt_avg_s == pytest.approx(0.0125)
+    assert run.connect_s == pytest.approx(0.001)
 
 
 #

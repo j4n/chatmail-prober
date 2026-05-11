@@ -149,7 +149,6 @@ relay_connections = Gauge(
 #
 
 _TURN_LABELS = ["relay", "turn_endpoint"]
-_TURN_RTT_LABELS = ["relay", "turn_endpoint", "quantile"]
 
 relay_turn_status = Gauge(
     "cmping_relay_turn_status",
@@ -158,34 +157,6 @@ relay_turn_status = Gauge(
         "1=ok, 0=down, -2=parse-error, -4=binary-missing, -5=timeout. "
         "Labels: relay, turn_endpoint (self|fallback)."
     ),
-    _TURN_LABELS,
-    registry=CMPING_REGISTRY,
-)
-
-relay_turn_rtt_seconds = Gauge(
-    "cmping_relay_turn_rtt_seconds",
-    "TURN loopback round-trip delay (quantile=avg|min|max).",
-    _TURN_RTT_LABELS,
-    registry=CMPING_REGISTRY,
-)
-
-relay_turn_jitter_seconds = Gauge(
-    "cmping_relay_turn_jitter_seconds",
-    "TURN loopback jitter (quantile=avg|min|max).",
-    _TURN_RTT_LABELS,
-    registry=CMPING_REGISTRY,
-)
-
-relay_turn_lost_packets = Gauge(
-    "cmping_relay_turn_lost_packets",
-    "Lost packets during the last TURN loopback test.",
-    _TURN_LABELS,
-    registry=CMPING_REGISTRY,
-)
-
-relay_turn_send_dropped = Gauge(
-    "cmping_relay_turn_send_dropped",
-    "Send-dropped packets during the last TURN loopback test.",
     _TURN_LABELS,
     registry=CMPING_REGISTRY,
 )
@@ -332,20 +303,10 @@ def clear_stale_relay_labels(configured_relays: list[str]) -> None:
     """Remove per-relay label sets for relays no longer in the configured list."""
     active = set(configured_relays)
     for metric in (relay_status, account_creations_total, relay_connections,
-                   relay_turn_status, relay_turn_lost_packets,
-                   relay_turn_send_dropped, relay_turn_connect_seconds,
-                   relay_turn_transmit_seconds, relay_turn_rtt_seconds,
-                   relay_turn_jitter_seconds,
+                   relay_turn_status, relay_turn_connect_seconds,
+                   relay_turn_transmit_seconds,
                    relay_iroh_status, relay_iroh_latency_seconds):
         _drop_labels(metric, lambda lv: lv[0] in active)
-
-
-def _set_minmax(gauge: Any, base: dict[str, str],
-                triple: tuple[float | None, float | None, float | None]) -> None:
-    """Set quantile=avg|min|max samples on a gauge, skipping Nones."""
-    for q, v in zip(("avg", "min", "max"), triple):
-        if v is not None:
-            gauge.labels(**base, quantile=q).set(v)
 
 
 def update_turn_metrics(relay: str, result: "TurnResult | None") -> None:
@@ -369,14 +330,9 @@ def update_turn_metrics(relay: str, result: "TurnResult | None") -> None:
     for gauge, value in (
         (relay_turn_connect_seconds,  run.connect_s),
         (relay_turn_transmit_seconds, run.transmit_s),
-        (relay_turn_lost_packets,     run.lost_packets),
-        (relay_turn_send_dropped,     run.send_dropped),
     ):
         if value is not None:
             gauge.labels(**base).set(value)
-
-    _set_minmax(relay_turn_rtt_seconds,    base, (run.rtt_avg_s, run.rtt_min_s, run.rtt_max_s))
-    _set_minmax(relay_turn_jitter_seconds, base, (run.jitter_avg_s, run.jitter_min_s, run.jitter_max_s))
 
 
 def update_iroh_metrics(relay: str, result: "IrohResult") -> None:

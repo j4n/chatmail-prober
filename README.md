@@ -104,10 +104,6 @@ A SIGUSR2 signal (`kill -USR2`) cycles verbosity: quiet -> normal -> debug -> de
 | `cmping_rounds_total`          | Counter | Total number of probe rounds completed since start  |
 | `cmping_relay_status`          | Gauge   | Relay alive-check status (1=online, 0=unknown, negative=error category) |
 | `cmping_relay_turn_status`     | Gauge   | TURN health from `turnutils_uclient` (1=ok, 0=down, negatives below)  |
-| `cmping_relay_turn_rtt_seconds`     | Gauge | TURN loopback RTT, label `quantile=avg\|min\|max`            |
-| `cmping_relay_turn_jitter_seconds`  | Gauge | TURN loopback jitter, label `quantile=avg\|min\|max`         |
-| `cmping_relay_turn_lost_packets`    | Gauge | Lost packets during the last TURN loopback test               |
-| `cmping_relay_turn_send_dropped`    | Gauge | Send-dropped packets during the last TURN loopback test       |
 | `cmping_relay_turn_connect_seconds` | Gauge | Time to establish the TURN allocation                         |
 | `cmping_relay_turn_transmit_seconds`| Gauge | Total TURN loopback test transmit duration                    |
 | `cmping_relay_iroh_status`     | Gauge   | Iroh-relay HTTP health (1=ok, 0=down, negatives below)        |
