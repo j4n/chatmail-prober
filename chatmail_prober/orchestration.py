@@ -18,6 +18,7 @@ from concurrent.futures import (
     TimeoutError as FuturesTimeoutError,
 )
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import structlog
@@ -113,22 +114,35 @@ def kill_stale_rpc_servers(cache_dir: str | Path, graceful: bool = True) -> None
         pass
 
 
+def _get_relay_account(
+    pool: RelayPool, relay: str, log_event: str,
+) -> Any | None:
+    """Shared maker+get_relay_account preamble for aux per-relay checks.
+
+    Returns the configured account, or None if the pool has no maker yet
+    or get_relay_account raises.  Callers handle the None case by writing
+    the appropriate "unavailable" metric.
+    """
+    if pool.maker is None:
+        return None
+    try:
+        account, _ = pool.maker.get_relay_account(relay)
+        return account
+    except Exception as e:
+        log.debug(log_event, relay=relay, error=str(e))
+        return None
+
+
 def _check_one_turn(
     pool: RelayPool, relay: str, timeout: float,
 ) -> None:
     """Resolve TURN coords for `relay` via its already-configured account
     and run turnutils_uclient.  Writes metrics directly.
     """
-    if pool.maker is None:
+    account = _get_relay_account(pool, relay, "turn_account_unavailable")
+    if account is None:
         update_turn_metrics(relay, None)
         return
-    try:
-        account, _ = pool.maker.get_relay_account(relay)
-    except Exception as e:
-        log.debug("turn_account_unavailable", relay=relay, error=str(e))
-        update_turn_metrics(relay, None)
-        return
-
     resolved = resolve_relay_turn(account, relay)
     if resolved is None:
         update_turn_metrics(relay, None)
@@ -140,64 +154,15 @@ def _check_one_turn(
              rtt_avg_s=result.run.rtt_avg_s)
 
 
-def _run_turn_checks(
-    alive_pool: RelayPool, alive_relays: list[str],
-    args: argparse.Namespace,
-) -> None:
-    """Fan out TURN health checks across alive relays."""
-    if not getattr(args, "check_turn", False):
-        return
-    if not alive_relays:
-        return
-    if shutil.which("turnutils_uclient") is None:
-        log.warning("turn_check_skipped",
-                    reason="turnutils_uclient not installed (apt install coturn-utils)")
-        for relay in alive_relays:
-            relay_turn_status.labels(relay=relay, turn_endpoint="self").set(
-                TurnStatus.BINARY_MISSING,
-            )
-        return
-    workers = min(len(alive_relays), args.workers)
-    timeout = float(args.timeout // 2) if args.timeout else 30.0
-    log.warning("turn_check_start", count=len(alive_relays), workers=workers)
-    turn_start = time.monotonic()
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(_check_one_turn, alive_pool, r, timeout): r
-            for r in alive_relays
-        }
-        try:
-            for future in as_completed(futures, timeout=timeout * 2):
-                relay = futures[future]
-                try:
-                    future.result()
-                except Exception as e:
-                    log.warning("turn_check_failed", relay=relay, error=str(e))
-                    update_turn_metrics(relay, None)
-        except FuturesTimeoutError:
-            for future, relay in futures.items():
-                if not future.done():
-                    log.warning("turn_check_timeout", relay=relay)
-                    future.cancel()
-                    update_turn_metrics(relay, None)
-    log.warning("turn_check_complete",
-                elapsed_s=round(time.monotonic() - turn_start, 1))
-
-
 def _check_one_iroh(
     pool: RelayPool, relay: str, imap_timeout: float, http_timeout: float,
 ) -> None:
     """Resolve iroh-relay URL via IMAP METADATA and HTTP-probe it."""
-    if pool.maker is None:
-        update_iroh_metrics(relay, IrohResult(status=IrohStatus.IMAP_FAILED,
-                                              error="no maker"))
-        return
-    try:
-        account, _ = pool.maker.get_relay_account(relay)
-    except Exception as e:
-        log.debug("iroh_account_unavailable", relay=relay, error=str(e))
-        update_iroh_metrics(relay, IrohResult(status=IrohStatus.IMAP_FAILED,
-                                              error=str(e)))
+    account = _get_relay_account(pool, relay, "iroh_account_unavailable")
+    if account is None:
+        update_iroh_metrics(relay, IrohResult(
+            status=IrohStatus.IMAP_FAILED, error="account unavailable",
+        ))
         return
     result = check_relay_iroh(
         account, imap_timeout=imap_timeout, http_timeout=http_timeout,
@@ -208,50 +173,95 @@ def _check_one_iroh(
              http_status=result.http_status, error=result.error)
 
 
+def _run_aux_checks(
+    name: str,
+    alive_pool: RelayPool,
+    alive_relays: list[str],
+    workers: int,
+    deadline_s: float,
+    submit: Callable[[ThreadPoolExecutor, RelayPool, str], Future],
+    on_failure: Callable[[str, BaseException], None],
+    on_timeout: Callable[[str], None],
+) -> None:
+    """Generic per-relay fan-out used by both TURN and iroh checks.
+
+    Each task is submitted via `submit(executor, pool, relay)`; per-task
+    exceptions go to `on_failure(relay, exc)`, and futures still running
+    when the outer deadline trips go to `on_timeout(relay)`.
+    """
+    log.warning(f"{name}_check_start", count=len(alive_relays), workers=workers)
+    start = time.monotonic()
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {submit(executor, alive_pool, r): r for r in alive_relays}
+        try:
+            for future in as_completed(futures, timeout=deadline_s):
+                relay = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    log.warning(f"{name}_check_failed", relay=relay, error=str(e))
+                    on_failure(relay, e)
+        except FuturesTimeoutError:
+            for future, relay in futures.items():
+                if not future.done():
+                    log.warning(f"{name}_check_timeout", relay=relay)
+                    future.cancel()
+                    on_timeout(relay)
+    log.warning(f"{name}_check_complete",
+                elapsed_s=round(time.monotonic() - start, 1))
+
+
+def _run_turn_checks(
+    alive_pool: RelayPool, alive_relays: list[str],
+    args: argparse.Namespace,
+) -> None:
+    """Fan out TURN health checks across alive relays."""
+    if not getattr(args, "check_turn", False) or not alive_relays:
+        return
+    if shutil.which("turnutils_uclient") is None:
+        log.warning("turn_check_skipped",
+                    reason="turnutils_uclient not installed (apt install coturn-utils)")
+        for relay in alive_relays:
+            relay_turn_status.labels(relay=relay, turn_endpoint="self").set(
+                TurnStatus.BINARY_MISSING,
+            )
+        return
+    timeout = float(args.timeout // 2) if args.timeout else 30.0
+    _run_aux_checks(
+        "turn", alive_pool, alive_relays,
+        workers=min(len(alive_relays), args.workers),
+        deadline_s=timeout * 2,
+        submit=lambda ex, p, r: ex.submit(_check_one_turn, p, r, timeout),
+        on_failure=lambda relay, _e: update_turn_metrics(relay, None),
+        on_timeout=lambda relay: update_turn_metrics(relay, None),
+    )
+
+
 def _run_iroh_checks(
     alive_pool: RelayPool, alive_relays: list[str],
     args: argparse.Namespace,
 ) -> None:
     """Fan out iroh-relay health checks across alive relays."""
-    if not getattr(args, "check_iroh", False):
+    if not getattr(args, "check_iroh", False) or not alive_relays:
         return
-    if not alive_relays:
-        return
-    workers = min(len(alive_relays), args.workers)
     # IMAP login + GETMETADATA is fast (~1s); cap the HTTP probe at the same
     # short window so a misbehaving iroh-relay does not stall the round.
     imap_timeout = min(15.0, float(args.timeout)) if args.timeout else 15.0
     http_timeout = min(15.0, float(args.timeout) / 2) if args.timeout else 15.0
-    log.warning("iroh_check_start", count=len(alive_relays), workers=workers)
-    iroh_start = time.monotonic()
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(_check_one_iroh, alive_pool, r,
-                            imap_timeout, http_timeout): r
-            for r in alive_relays
-        }
-        # Outer deadline = sum of both per-relay timeouts plus headroom.
-        deadline = (imap_timeout + http_timeout) * 2
-        try:
-            for future in as_completed(futures, timeout=deadline):
-                relay = futures[future]
-                try:
-                    future.result()
-                except Exception as e:
-                    log.warning("iroh_check_failed", relay=relay, error=str(e))
-                    update_iroh_metrics(relay, IrohResult(
-                        status=IrohStatus.IMAP_FAILED, error=str(e),
-                    ))
-        except FuturesTimeoutError:
-            for future, relay in futures.items():
-                if not future.done():
-                    log.warning("iroh_check_timeout", relay=relay)
-                    future.cancel()
-                    update_iroh_metrics(relay, IrohResult(
-                        status=IrohStatus.TIMEOUT, error="round timeout",
-                    ))
-    log.warning("iroh_check_complete",
-                elapsed_s=round(time.monotonic() - iroh_start, 1))
+    _run_aux_checks(
+        "iroh", alive_pool, alive_relays,
+        workers=min(len(alive_relays), args.workers),
+        deadline_s=(imap_timeout + http_timeout) * 2,
+        submit=lambda ex, p, r: ex.submit(
+            _check_one_iroh, p, r, imap_timeout, http_timeout,
+        ),
+        on_failure=lambda relay, e: update_iroh_metrics(relay, IrohResult(
+            status=IrohStatus.IMAP_FAILED, error=str(e),
+        )),
+        on_timeout=lambda relay: update_iroh_metrics(relay, IrohResult(
+            status=IrohStatus.TIMEOUT, error="round timeout",
+        )),
+    )
 
 
 def check_relays_alive(

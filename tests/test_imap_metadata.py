@@ -166,7 +166,7 @@ def test_fetch_raises_on_connect_failure():
 
 def test_fetch_raises_on_login_failure():
     _FakeImap.login_raises = imaplib.IMAP4.error("AUTHENTICATIONFAILED")
-    with pytest.raises(ImapMetadataError, match="login"):
+    with pytest.raises(ImapMetadataError, match="session"):
         fetch_metadata_entry(CREDS, ENTRY)
 
 

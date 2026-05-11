@@ -67,22 +67,22 @@ def resolve_iroh_url(
     return fetch_metadata_entry(creds, IROH_METADATA_KEY, timeout=imap_timeout)
 
 
+_USER_AGENT = "chatmail-prober/1.0"
+
+
 def check_iroh(url: str, timeout: float = 15.0) -> IrohResult:
     """HTTP GET `url`, classify outcome into an IrohResult."""
     start = time.monotonic()
+    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             elapsed = time.monotonic() - start
             code = resp.status
-            if 200 <= code < 300:
-                return IrohResult(
-                    status=IrohStatus.OK, url=url,
-                    latency_s=elapsed, http_status=code,
-                )
+            status = IrohStatus.OK if 200 <= code < 300 else IrohStatus.DOWN
             return IrohResult(
-                status=IrohStatus.DOWN, url=url,
+                status=status, url=url,
                 latency_s=elapsed, http_status=code,
-                error=f"http {code}",
+                error=None if status == IrohStatus.OK else f"http {code}",
             )
     except urllib.error.HTTPError as e:
         return IrohResult(
@@ -95,16 +95,8 @@ def check_iroh(url: str, timeout: float = 15.0) -> IrohResult:
     except urllib.error.URLError as e:
         # socket.timeout wrapped by URLError in older Python; check too.
         if isinstance(e.reason, socket.timeout):
-            return IrohResult(
-                status=IrohStatus.TIMEOUT, url=url, error="timeout",
-            )
-        return IrohResult(
-            status=IrohStatus.DOWN, url=url, error=str(e.reason),
-        )
-    except Exception as e:  # belt-and-braces: never escape
-        return IrohResult(
-            status=IrohStatus.DOWN, url=url, error=str(e),
-        )
+            return IrohResult(status=IrohStatus.TIMEOUT, url=url, error="timeout")
+        return IrohResult(status=IrohStatus.DOWN, url=url, error=str(e.reason))
 
 
 def check_relay_iroh(

@@ -10,8 +10,11 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from .iroh import IrohResult  # noqa: F401
     from .probe import ProbeResult
     from .turn import TurnResult  # noqa: F401
+
+from .iroh import IrohStatus
 
 from prometheus_client import (
     CollectorRegistry,
@@ -382,10 +385,6 @@ def update_iroh_metrics(relay: str, result: "IrohResult") -> None:
     Always sets the status gauge.  Sets latency only when the probe
     succeeded; on failure the previous latency sample is left in place
     (smokeping convention -- last-good value stays visible)."""
-    # Lazy import: iroh.py imports log_config + imap_metadata; metrics.py
-    # is imported very early, so keep this off the module top level.
-    from .iroh import IrohStatus  # noqa: PLC0415
-
     relay_iroh_status.labels(relay=relay).set(result.status)
     if result.latency_s is not None and result.status == IrohStatus.OK:
         relay_iroh_latency_seconds.labels(relay=relay).set(result.latency_s)

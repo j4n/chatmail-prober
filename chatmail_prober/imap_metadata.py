@@ -17,6 +17,7 @@ from __future__ import annotations
 import imaplib
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from .log_config import get_logger
@@ -70,19 +71,13 @@ def creds_from_account(account: Any) -> ImapCreds | None:
     return ImapCreds(host=host, port=993, user=addr, password=password)
 
 
-# Pre-compiled at module load.  Captures either:
-#   <entry> "value"           -- quoted-string form
-#   <entry> NIL               -- explicit no-value
-# Literal-string form ({N}\r\n<bytes>) is handled separately because
-# imaplib returns it as a tuple instead of a single bytes blob.
+# Captures `<entry> "value"`.  NIL and absent entries fall through to None.
+# Literal form ({N}\r\n<bytes>) arrives as a tuple, handled separately.
+@lru_cache(maxsize=8)
 def _quoted_value_pattern(entry: str) -> re.Pattern[bytes]:
     return re.compile(
         re.escape(entry).encode() + rb'\s+"((?:[^"\\]|\\.)*)"',
     )
-
-
-def _nil_value_pattern(entry: str) -> re.Pattern[bytes]:
-    return re.compile(re.escape(entry).encode() + rb"\s+NIL\b")
 
 
 def _extract_from_line(line: Any, entry: str) -> str | None:
@@ -126,15 +121,12 @@ def fetch_metadata_entry(
     try:
         try:
             conn.login(creds.user, creds.password)
-        except imaplib.IMAP4.error as e:
-            raise ImapMetadataError(f"imap login failed: {e}") from e
-        try:
             typ, _ = conn._simple_command("GETMETADATA", '""', entry)
+            if typ != "OK":
+                raise ImapMetadataError(f"GETMETADATA returned {typ}")
+            _, lines = conn._untagged_response(typ, [None], "METADATA")
         except (OSError, imaplib.IMAP4.error) as e:
-            raise ImapMetadataError(f"GETMETADATA failed: {e}") from e
-        if typ != "OK":
-            raise ImapMetadataError(f"GETMETADATA returned {typ}")
-        _, lines = conn._untagged_response(typ, [None], "METADATA")
+            raise ImapMetadataError(f"imap session failed: {e}") from e
         # Real-world response shapes from chatmail (Dovecot), captured live:
         #   value present : [(b'"" (/path {N}', b'<N bytes>'), b')']
         #   value is NIL  : [b'"" (/path NIL)']
@@ -147,5 +139,5 @@ def fetch_metadata_entry(
     finally:
         try:
             conn.logout()
-        except Exception:
-            pass
+        except (OSError, imaplib.IMAP4.error) as e:
+            log.debug("imap_logout_failed", error=str(e))
