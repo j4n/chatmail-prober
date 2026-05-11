@@ -1786,6 +1786,163 @@
       ],
       "title": "Status (redundant)",
       "type": "row"
+    },
+    {
+      "id": 200,
+      "title": "Iroh availability -- $relay",
+      "description": "Iroh-relay HTTP health for the selected relay. 1=ok, 0=down, -2=no-metadata, -3=imap-failed, -5=timeout.",
+      "type": "state-timeline",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 0,
+            "fillOpacity": 70
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "ok",
+                  "color": "green"
+                },
+                "0": {
+                  "text": "down",
+                  "color": "red"
+                },
+                "-2": {
+                  "text": "no-metadata",
+                  "color": "orange"
+                },
+                "-3": {
+                  "text": "imap-failed",
+                  "color": "purple"
+                },
+                "-5": {
+                  "text": "timeout",
+                  "color": "yellow"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "options": {
+        "mergeValues": true,
+        "showValue": "auto",
+        "alignValue": "center",
+        "rowHeight": 0.9,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cmping_relay_iroh_status{relay=\"$relay\"}",
+          "legendFormat": "{{relay}}"
+        }
+      ]
+    },
+    {
+      "id": 201,
+      "title": "Iroh latency -- $relay",
+      "description": "Last iroh-relay HTTP GET latency. One sample per probe round (~15 min cadence). Log y-axis.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "drawStyle": "line",
+            "spanNulls": true,
+            "gradientMode": "scheme",
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "dark-green",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.1
+              },
+              {
+                "color": "light-green",
+                "value": 0.5
+              },
+              {
+                "color": "yellow",
+                "value": 1.0
+              },
+              {
+                "color": "red",
+                "value": 5.0
+              },
+              {
+                "color": "dark-red",
+                "value": 10.0
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ],
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cmping_relay_iroh_latency_seconds{relay=\"$relay\"}",
+          "legendFormat": "{{relay}}"
+        }
+      ]
     }
   ],
   "refresh": "5m",
