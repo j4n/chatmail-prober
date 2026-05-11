@@ -343,7 +343,7 @@ def check_relays_alive(
                     remaining = [r for r in all_check_relays if r not in completed and r not in dead]
                     if remaining:
                         log.info("alive_check_progress",
-                                 remaining=len(remaining),
+                                 completed=len(completed), total=len(all_check_relays),
                                  pending=remaining[:5])
         except FuturesTimeoutError:
             elapsed = time.monotonic() - check_start
@@ -547,6 +547,10 @@ def run_round(
                     avg_ms=round(statistics.fmean(result.rtts_ms)) if result.rtts_ms else 0,
                     loss_pct=result.loss,
                 )
+            if completed % 5 == 0:
+                log.info("probe_round_progress",
+                         completed=completed, total=len(pairs),
+                         failed=failed)
 
     elapsed = time.time() - round_start
     last_round_timestamp.set(time.time())
