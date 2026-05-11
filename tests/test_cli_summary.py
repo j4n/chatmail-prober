@@ -17,9 +17,9 @@ import io
 
 from chatmail_prober.probe import ProbeResult
 
-# ---------------------------------------------------------------------------
+#
 # Helpers
-# ---------------------------------------------------------------------------
+#
 
 def _ok(src: str = "a.example", dst: str = "b.example",
         rtts: list[float] | None = None,
@@ -45,9 +45,9 @@ def _render(*args, **kwargs) -> str:
     return buf.getvalue()
 
 
-# ---------------------------------------------------------------------------
+#
 # Table header
-# ---------------------------------------------------------------------------
+#
 
 import pytest
 
@@ -62,9 +62,9 @@ def test_table_header_present(header):
     assert header in out
 
 
-# ---------------------------------------------------------------------------
+#
 # Table rows for successful probes.
-# ---------------------------------------------------------------------------
+#
 
 class TestSuccessRows:
     def test_route_present(self):
@@ -106,9 +106,9 @@ class TestSuccessRows:
         assert out.count("->") >= 2
 
 
-# ---------------------------------------------------------------------------
+#
 # Table rows for failed probes.
-# ---------------------------------------------------------------------------
+#
 
 class TestFailedRows:
     def test_failed_row_shows_category(self):
@@ -140,9 +140,9 @@ class TestFailedRows:
         assert "timeout" in out.lower()  # failed row
 
 
-# ---------------------------------------------------------------------------
+#
 # Failure block
-# ---------------------------------------------------------------------------
+#
 
 class TestFailureBlock:
     def test_failure_block_present_when_failures_exist(self):
@@ -150,9 +150,9 @@ class TestFailureBlock:
         assert "failure" in out.lower()
 
 
-# ---------------------------------------------------------------------------
+#
 # Dead-relay failures table
-# ---------------------------------------------------------------------------
+#
 
 class TestDeadRelayTable:
     """When dead_relays is a dict[str, str|None], a Host/Error/Message table
@@ -194,9 +194,9 @@ class TestDeadRelayTable:
         assert "silent.example" in out
 
 
-# ---------------------------------------------------------------------------
+#
 # Summary footer
-# ---------------------------------------------------------------------------
+#
 
 class TestSummaryFooter:
     def test_elapsed_shown(self):

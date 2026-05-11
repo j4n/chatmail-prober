@@ -25,9 +25,9 @@ from deltachat_rpc_client import EventType
 from chatmail_prober.metrics import relay_status_value
 from chatmail_prober.probe import AccountMaker, PingError
 
-# ---------------------------------------------------------------------------
+#
 # Minimal stubs. Real queue and threading, no network.
-# ---------------------------------------------------------------------------
+#
 
 class _Rpc:
     """Stub Rpc backed by real queue.Queue instances."""
@@ -106,9 +106,9 @@ def _push_idle(rpc: _Rpc, account_id: int, delay: float = 0.0) -> None:
     threading.Thread(target=_push, daemon=True).start()
 
 
-# ---------------------------------------------------------------------------
+#
 # Tests: wait_account_online timeout
-# ---------------------------------------------------------------------------
+#
 
 class TestWaitAccountOnlineTimeout:
     """AccountMaker.wait_account_online must raise PingError on timeout."""
@@ -190,9 +190,9 @@ class TestWaitAccountOnlineTimeout:
         maker.wait_account_online(account, timeout=0.5)  # must not raise
 
 
-# ---------------------------------------------------------------------------
+#
 # Tests: account reuse via get_relay_account
-# ---------------------------------------------------------------------------
+#
 
 class TestAccountReuse:
     """get_relay_account must reuse online accounts without re-running setup."""
@@ -288,9 +288,9 @@ class TestAccountReuse:
         )
 
 
-# ---------------------------------------------------------------------------
+#
 # Tests: per-domain account creation cap
-# ---------------------------------------------------------------------------
+#
 
 class TestMaxAccountsPerDomain:
     """get_relay_account must refuse to create more than max_accounts_per_domain.

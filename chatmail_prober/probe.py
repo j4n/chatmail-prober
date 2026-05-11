@@ -61,9 +61,9 @@ __all__ = [
 ]
 
 
-# ---------------------------------------------------------------------------
+#
 # _perform_direct_ping -- orchestrates a single 1:1 probe
-# ---------------------------------------------------------------------------
+#
 
 def _perform_direct_ping(
     relay_contexts: Mapping[str, "RelayContext | RelayPool"],
@@ -141,9 +141,9 @@ def _perform_direct_ping(
     return pinger
 
 
-# ---------------------------------------------------------------------------
+#
 # ProbeResult / run_probe -- public API for the exporter
-# ---------------------------------------------------------------------------
+#
 
 @dataclass
 class ProbeResult:

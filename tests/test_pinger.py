@@ -14,10 +14,10 @@ import time
 
 from chatmail_prober.probe import Pinger
 
-# ---------------------------------------------------------------------------
+#
 # Minimal stubs -- just enough interface for Pinger to function without a
 # real deltachat-rpc-server.  All threading primitives are real.
-# ---------------------------------------------------------------------------
+#
 
 class _Rpc:
     """RPC stub backed by real queue.Queue instances."""
@@ -74,9 +74,9 @@ def _make_pinger(count=1, interval=0.0):
     return p
 
 
-# ---------------------------------------------------------------------------
+#
 # Tests
-# ---------------------------------------------------------------------------
+#
 
 class TestReceiverCleanup:
     """Verify that Pinger.receive() cleans up on exit."""

@@ -18,9 +18,9 @@ import pytest
 
 from chatmail_prober.__main__ import parse_args, reset_accounts
 
-# ---------------------------------------------------------------------------
+#
 # Helpers
-# ---------------------------------------------------------------------------
+#
 
 def _make_cache(tmp_path: Path, workers: int = 2,
                 domains: tuple[str, ...] = ("nine.testrun.org", "mailchat.pl")) -> Path:
@@ -34,9 +34,9 @@ def _make_cache(tmp_path: Path, workers: int = 2,
     return cache
 
 
-# ---------------------------------------------------------------------------
+#
 # parse_args: --reset flag shape
-# ---------------------------------------------------------------------------
+#
 
 class TestResetArgParsing:
     def test_reset_all_keyword(self, tmp_path):
@@ -66,9 +66,9 @@ class TestResetArgParsing:
         assert exc_info.value.code != 0
 
 
-# ---------------------------------------------------------------------------
+#
 # reset_accounts() function
-# ---------------------------------------------------------------------------
+#
 
 class TestResetAccountsFunction:
     def test_full_reset_removes_all_worker_dirs(self, tmp_path):

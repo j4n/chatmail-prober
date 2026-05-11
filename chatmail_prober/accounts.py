@@ -24,9 +24,9 @@ from chatmail_prober.log_config import get_logger
 log = get_logger(__name__)
 
 
-# ---------------------------------------------------------------------------
+#
 # QR / login URL helpers
-# ---------------------------------------------------------------------------
+#
 
 def is_ip_address(host: str) -> bool:
     """Check if the given host is an IP address."""
@@ -57,9 +57,9 @@ def create_qr_url(domain_or_ip: str) -> str:
     return f"dcaccount:{domain_or_ip}"
 
 
-# ---------------------------------------------------------------------------
+#
 # AccountMaker
-# ---------------------------------------------------------------------------
+#
 
 @dataclass
 class _DomainScan:

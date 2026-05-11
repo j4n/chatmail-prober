@@ -8,9 +8,9 @@ import pytest
 
 from chatmail_prober.__main__ import _bracket_ipv6, parse_args
 
-# ---------------------------------------------------------------------------
+#
 # --hosts / -H
-# ---------------------------------------------------------------------------
+#
 
 @pytest.fixture()
 def relay_file(tmp_path):
@@ -34,9 +34,9 @@ class TestHostsFlag:
         assert args.hosts is None
 
 
-# ---------------------------------------------------------------------------
+#
 # IPv6 auto-bracketing
-# ---------------------------------------------------------------------------
+#
 
 @pytest.mark.parametrize(("host", "expected"), [
     ("::1", "[::1]"),
@@ -49,9 +49,9 @@ def test_bracket_ipv6(host, expected):
     assert _bracket_ipv6(host) == expected
 
 
-# ---------------------------------------------------------------------------
+#
 # Short flag aliases. One round-trip test covers all of them.
-# ---------------------------------------------------------------------------
+#
 
 class TestShortAliases:
     """All short flags must wire to the correct long-form attribute."""

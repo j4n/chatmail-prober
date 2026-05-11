@@ -147,9 +147,9 @@ def test_run_uclient_dispatches_parser(monkeypatch):
     assert run.rtt_avg_s == pytest.approx(0.0125)
 
 
-# ---------------------------------------------------------------------------
+#
 # resolve_relay_turn
-# ---------------------------------------------------------------------------
+#
 
 def _mock_account(servers):
     acct = MagicMock()
@@ -218,9 +218,9 @@ def test_resolve_skips_entries_without_credentials():
     assert resolve_relay_turn(acct, "x") is None
 
 
-# ---------------------------------------------------------------------------
+#
 # check_turn -- status codes
-# ---------------------------------------------------------------------------
+#
 
 def _resolved(kind="self"):
     return ("h", 3478, "u", "p", kind)

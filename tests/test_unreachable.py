@@ -14,9 +14,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
+#
 # parse_args tests
-# ---------------------------------------------------------------------------
+#
 from chatmail_prober.__main__ import parse_args
 
 
@@ -38,9 +38,9 @@ class TestUnreachableFlag:
         assert args.unreachable is None
 
 
-# ---------------------------------------------------------------------------
+#
 # check_relays_alive with unreachable relays
-# ---------------------------------------------------------------------------
+#
 
 from chatmail_prober.orchestration import check_relays_alive
 
@@ -147,9 +147,9 @@ class TestUnreachablePromotion:
         assert any("relay_recovered_from_unreachable" in r.message for r in caplog.records)
 
 
-# ---------------------------------------------------------------------------
+#
 # smoke_check.py --exclude-unreachable
-# ---------------------------------------------------------------------------
+#
 
 from scripts.smoke_check import main as smoke_main
 

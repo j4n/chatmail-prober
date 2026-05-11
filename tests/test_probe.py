@@ -174,7 +174,7 @@ class TestCreateQrUrl:
         assert "sp" in qs
 
 
-# ---------------------------------------------------------------------------
+#
 # RPC-level setup error handling: inject real JsonRpcError instances using
 # the exact message strings produced by chatmail/core's Rust network layer
 # and verify run_probe surfaces them with the right relay_status_value code.
@@ -183,7 +183,7 @@ class TestCreateQrUrl:
 #   DNS:     src/net/dns.rs   "Could not find DNS resolutions for {host}:{port}..."
 #   Auth:    src/stock_str.rs + IMAP server "[AUTHENTICATIONFAILED]"
 #   Timeout: src/net.rs       tokio::time::timeout -> "Connection timeout: deadline has elapsed"
-# ---------------------------------------------------------------------------
+#
 
 
 def _dns_error(host: str = "imap.host.abc", port: int = 993) -> JsonRpcError:
