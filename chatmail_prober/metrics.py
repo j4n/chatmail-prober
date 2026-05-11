@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .probe import ProbeResult
+    from .turn import TurnResult  # noqa: F401
 
 from prometheus_client import (
     CollectorRegistry,
@@ -140,6 +141,66 @@ relay_connections = Gauge(
     registry=CMPING_REGISTRY,
 )
 
+# ---------------------------------------------------------------------------
+# Per-relay TURN endpoint metrics
+# ---------------------------------------------------------------------------
+
+_TURN_LABELS = ["relay", "turn_endpoint"]
+_TURN_RTT_LABELS = ["relay", "turn_endpoint", "quantile"]
+
+relay_turn_status = Gauge(
+    "cmping_relay_turn_status",
+    (
+        "TURN endpoint health from turnutils_uclient. "
+        "1=ok, 0=down, -2=parse-error, -4=binary-missing, -5=timeout. "
+        "Labels: relay, turn_endpoint (self|fallback)."
+    ),
+    _TURN_LABELS,
+    registry=CMPING_REGISTRY,
+)
+
+relay_turn_rtt_seconds = Gauge(
+    "cmping_relay_turn_rtt_seconds",
+    "TURN loopback round-trip delay (quantile=avg|min|max).",
+    _TURN_RTT_LABELS,
+    registry=CMPING_REGISTRY,
+)
+
+relay_turn_jitter_seconds = Gauge(
+    "cmping_relay_turn_jitter_seconds",
+    "TURN loopback jitter (quantile=avg|min|max).",
+    _TURN_RTT_LABELS,
+    registry=CMPING_REGISTRY,
+)
+
+relay_turn_lost_packets = Gauge(
+    "cmping_relay_turn_lost_packets",
+    "Lost packets during the last TURN loopback test.",
+    _TURN_LABELS,
+    registry=CMPING_REGISTRY,
+)
+
+relay_turn_send_dropped = Gauge(
+    "cmping_relay_turn_send_dropped",
+    "Send-dropped packets during the last TURN loopback test.",
+    _TURN_LABELS,
+    registry=CMPING_REGISTRY,
+)
+
+relay_turn_connect_seconds = Gauge(
+    "cmping_relay_turn_connect_seconds",
+    "Time to establish the TURN allocation.",
+    _TURN_LABELS,
+    registry=CMPING_REGISTRY,
+)
+
+relay_turn_transmit_seconds = Gauge(
+    "cmping_relay_turn_transmit_seconds",
+    "Total TURN loopback test transmit duration.",
+    _TURN_LABELS,
+    registry=CMPING_REGISTRY,
+)
+
 
 def _drop_labels(
     metric: Any, keep: Callable[[tuple[str, ...]], bool]
@@ -242,8 +303,51 @@ def is_transient_alive_error(relay: str | None, error_str: str | None) -> bool:
 def clear_stale_relay_labels(configured_relays: list[str]) -> None:
     """Remove per-relay label sets for relays no longer in the configured list."""
     active = set(configured_relays)
-    for metric in (relay_status, account_creations_total, relay_connections):
+    for metric in (relay_status, account_creations_total, relay_connections,
+                   relay_turn_status, relay_turn_lost_packets,
+                   relay_turn_send_dropped, relay_turn_connect_seconds,
+                   relay_turn_transmit_seconds, relay_turn_rtt_seconds,
+                   relay_turn_jitter_seconds):
         _drop_labels(metric, lambda lv: lv[0] in active)
+
+
+def _set_minmax(gauge: Any, base: dict[str, str],
+                triple: tuple[float | None, float | None, float | None]) -> None:
+    """Set quantile=avg|min|max samples on a gauge, skipping Nones."""
+    for q, v in zip(("avg", "min", "max"), triple):
+        if v is not None:
+            gauge.labels(**base, quantile=q).set(v)
+
+
+def update_turn_metrics(relay: str, result: "TurnResult | None") -> None:
+    """Write a per-relay TURN check outcome to the prometheus gauges.
+
+    Pass result=None when ice_servers() was empty or malformed: records
+    status=-2 and leaves timing series untouched so old samples stay
+    visible (smokeping-style)."""
+    # Lazy import: turn.py -> log_config; metrics.py is imported very early.
+    from .turn import TurnStatus  # noqa: PLC0415
+
+    if result is None:
+        relay_turn_status.labels(relay=relay, turn_endpoint="self").set(
+            TurnStatus.PARSE_ERROR,
+        )
+        return
+
+    base = {"relay": relay, "turn_endpoint": result.endpoint_kind}
+    relay_turn_status.labels(**base).set(result.status_code)
+    run = result.run
+    for gauge, value in (
+        (relay_turn_connect_seconds,  run.connect_s),
+        (relay_turn_transmit_seconds, run.transmit_s),
+        (relay_turn_lost_packets,     run.lost_packets),
+        (relay_turn_send_dropped,     run.send_dropped),
+    ):
+        if value is not None:
+            gauge.labels(**base).set(value)
+
+    _set_minmax(relay_turn_rtt_seconds,    base, (run.rtt_avg_s, run.rtt_min_s, run.rtt_max_s))
+    _set_minmax(relay_turn_jitter_seconds, base, (run.jitter_avg_s, run.jitter_min_s, run.jitter_max_s))
 
 
 def sample_relay_connections(relays: list[str]) -> None:
