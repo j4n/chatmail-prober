@@ -301,7 +301,19 @@ def main(argv: list[str] | None = None) -> None:
 
     configure_logging(level=app_level)
 
+    start_time = time.time()
+    try:
+        from ._version import __version__ as _pkg_version
+    except ImportError:
+        _pkg_version = "unknown"
+    log.debug("chatmail-prober %s starting at %s",
+              _pkg_version,
+              time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime(start_time)))
+
     shutdown_event = threading.Event()
+    # Mutable single-slot holder so SIGUSR2 can report whatever phase the
+    # main loop is in.  Updated in-place as the loop transitions.
+    phase: list[str] = ["starting"]
 
     # Suppress harmless "RPC server closed" errors from event loop during shutdown.
     logging.getLogger().addFilter(_SupprRpcClosedFilter(shutdown_event))
@@ -373,6 +385,7 @@ def main(argv: list[str] | None = None) -> None:
         if shutdown_event.is_set():
             return  # second signal: let systemd SIGKILL us
         log.info("Shutting down, killing running probes...")
+        phase[0] = "shutting down"
         shutdown_event.set()
         for ex in executors:
             ex.shutdown(wait=False, cancel_futures=True)
@@ -407,7 +420,11 @@ def main(argv: list[str] | None = None) -> None:
         level, root_level, label = _verbosity_levels[_verbosity_idx]
         logging.getLogger("chatmail_prober").setLevel(level)
         logging.getLogger().setLevel(root_level)
-        log.warning("SIGUSR2: verbosity -> %s", label)
+        uptime_s = time.time() - start_time
+        log.warning(
+            "SIGUSR2: verbosity -> %s | phase: %s | uptime: %.0fs | version: %s",
+            label, phase[0], uptime_s, _pkg_version,
+        )
 
     signal.signal(signal.SIGUSR2, _handle_usr2)
 
@@ -416,6 +433,7 @@ def main(argv: list[str] | None = None) -> None:
     worker_pools: list[RelayPool] = []
     previously_dead: dict[str, str | None] = {}
     try:
+        phase[0] = "initial alive check"
         relays, previously_dead = check_relays_alive(
             all_relays, args, cache_dir, unreachable_relays=unreachable_relays,
             alive_pool=alive_pool)
@@ -448,6 +466,7 @@ def main(argv: list[str] | None = None) -> None:
                             all_relays = refreshed
                     except Exception as e:
                         log.warning("Failed to refresh relay list: %s", e)
+                phase[0] = "alive check"
                 relays, previously_dead = check_relays_alive(
                     all_relays, args, cache_dir, previously_dead=previously_dead,
                     unreachable_relays=unreachable_relays,
@@ -458,6 +477,7 @@ def main(argv: list[str] | None = None) -> None:
                     pool.prune(all_relays)
                 log.info("continuing with %d/%d relays online, next check in %ds", len(relays), len(all_relays), interval)
 
+            phase[0] = f"probe round ({len(relays)} relays)"
             elapsed, round_results = run_round(
                 relays, args, executors, worker_pools,
                 shutdown_event,
@@ -484,6 +504,7 @@ def main(argv: list[str] | None = None) -> None:
                 )
             else:
                 log.info("Sleeping %.0fs until next round", remaining)
+                phase[0] = f"sleeping {remaining:.0f}s until next round"
                 shutdown_event.wait(timeout=remaining)
     finally:
         if args.textfile:
