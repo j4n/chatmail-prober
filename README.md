@@ -59,6 +59,8 @@ RELAYS               Relay list file(s), one domain per line, # comments (option
 --ping-interval S    Seconds between pings within a probe (default: 0.1)
 -t, --timeout SECS   Per-pair receive timeout in seconds (default: 90)
 -w, --workers N      Max concurrent probe threads (default: 5)
+-T, --check-turn     Also probe each relay's TURN endpoint (requires coturn-utils)
+-I, --check-iroh     Also probe each relay's iroh-relay URL (IMAP METADATA + HTTP GET)
 --cache-dir PATH     Base dir for per-worker account directories (default: ~/.cache/chatmail-prober)
 --reset [DOMAIN...]  Reset cached accounts; "all" resets all, DOMAIN args reset only those
 --exclude PATH       File of pairs to skip: "src->dst" per line (# comments)
@@ -101,6 +103,15 @@ A SIGUSR2 signal (`kill -USR2`) cycles verbosity: quiet -> normal -> debug -> de
 | `cmping_round_duration_seconds` | Gauge   | Wall-clock time of last completed round              |
 | `cmping_rounds_total`          | Counter | Total number of probe rounds completed since start  |
 | `cmping_relay_status`          | Gauge   | Relay alive-check status (1=online, 0=unknown, negative=error category) |
+| `cmping_relay_turn_status`     | Gauge   | TURN health from `turnutils_uclient` (1=ok, 0=down, negatives below)  |
+| `cmping_relay_turn_rtt_seconds`     | Gauge | TURN loopback RTT, label `quantile=avg\|min\|max`            |
+| `cmping_relay_turn_jitter_seconds`  | Gauge | TURN loopback jitter, label `quantile=avg\|min\|max`         |
+| `cmping_relay_turn_lost_packets`    | Gauge | Lost packets during the last TURN loopback test               |
+| `cmping_relay_turn_send_dropped`    | Gauge | Send-dropped packets during the last TURN loopback test       |
+| `cmping_relay_turn_connect_seconds` | Gauge | Time to establish the TURN allocation                         |
+| `cmping_relay_turn_transmit_seconds`| Gauge | Total TURN loopback test transmit duration                    |
+| `cmping_relay_iroh_status`     | Gauge   | Iroh-relay HTTP health (1=ok, 0=down, negatives below)        |
+| `cmping_relay_iroh_latency_seconds` | Gauge | Last successful iroh-relay HTTP GET latency                 |
 
 Per-pair metrics have `source`, `destination`, and `probe_type` labels.
 `probe_type` is `"self"` when source equals destination, `"cross"` otherwise.
@@ -114,6 +125,34 @@ to correct false positives from filtered ports or broken autoconfig.
 
 On probe error, RTT gauges are set to NaN so dashboards show a gap
 instead of stale values from the previous successful round.
+
+### Optional auxiliary checks
+
+Two opt-in checks run inside the alive-check loop, sharing its
+worker pool. Both are off by default; neither is required for the
+core RTT matrix.
+
+`-T/--check-turn` runs `turnutils_uclient` against each alive
+relay's TURN endpoint in loopback mode (the same `-y` self-test the
+deltachat-rpc-server itself uses). Requires `coturn-utils`
+(`apt install coturn-utils` on Debian). Relays that publish their
+own TURN are labelled `turn_endpoint="self"`; relays that fall back
+to the public `turn.delta.chat` are labelled `turn_endpoint="fallback"`.
+Status codes: `1` ok, `0` down, `-2` parse-error (`ice_servers()`
+empty/malformed), `-4` binary-missing, `-5` timeout.
+
+`-I/--check-iroh` resolves each relay's iroh-relay URL via IMAP
+METADATA (`/shared/vendor/deltachat/irohrelay`, RFC 5464) and HTTP
+GETs it. No external dependencies. The IMAP-METADATA path is a
+workaround: deltachat-rpc-client does not currently expose an
+accessor for this metadata entry, so the prober opens a parallel
+IMAP4_SSL session using the credentials stored in the configured
+account (`configured_addr` + `mail_pw`, with the chatmail default
+host=domain, port=993). Once core grows an `Account.iroh_relay()`
+accessor this fallback can go away. Status codes: `1` ok (HTTP 2xx),
+`0` down (non-2xx, connection refused), `-2` no-metadata (server
+does not advertise the entry), `-3` imap-failed (connect/login),
+`-5` timeout (HTTP probe).
 
 ## Operation Overview
 

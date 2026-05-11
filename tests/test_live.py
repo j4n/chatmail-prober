@@ -14,6 +14,8 @@ from pathlib import Path
 import pytest
 
 from chatmail_prober.__main__ import read_relay_list
+from chatmail_prober.iroh import IrohStatus, check_relay_iroh, resolve_iroh_url
+from chatmail_prober.pool import RelayPool
 from chatmail_prober.probe import run_probe
 
 EXAMPLE_RELAYS = str(Path(__file__).resolve().parent.parent / "relays.txt.example")
@@ -86,6 +88,30 @@ class TestLiveErrorHandling:
         )
         assert result.error is not None
         assert result.sent == 0
+
+
+class TestLiveIroh:
+    """End-to-end iroh-relay probe (IMAP METADATA -> HTTP GET)."""
+
+    @pytest.mark.parametrize("relay", RELAYS, ids=_self_loop_ids())
+    def test_iroh_probe(self, relay, tmp_path):
+        with RelayPool(str(tmp_path / "cache")) as pool:
+            pool.open_all([relay])
+            assert pool.maker is not None
+            account, was_online = pool.maker.get_relay_account(relay)
+            if not was_online:
+                pool.maker.wait_account_online(account, timeout=60)
+
+            url = resolve_iroh_url(account)
+            assert url, f"{relay} did not advertise an iroh-relay URL"
+            assert url.startswith("http"), f"unexpected URL shape: {url!r}"
+
+            result = check_relay_iroh(account)
+            assert result.status == IrohStatus.OK, (
+                f"{relay} iroh probe failed: status={int(result.status)} "
+                f"url={result.url} error={result.error}"
+            )
+            assert result.latency_s is not None and result.latency_s > 0
 
 
 class TestThreadCleanup:

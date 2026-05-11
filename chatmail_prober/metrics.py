@@ -141,9 +141,9 @@ relay_connections = Gauge(
     registry=CMPING_REGISTRY,
 )
 
-# ---------------------------------------------------------------------------
+#
 # Per-relay TURN endpoint metrics
-# ---------------------------------------------------------------------------
+#
 
 _TURN_LABELS = ["relay", "turn_endpoint"]
 _TURN_RTT_LABELS = ["relay", "turn_endpoint", "quantile"]
@@ -198,6 +198,31 @@ relay_turn_transmit_seconds = Gauge(
     "cmping_relay_turn_transmit_seconds",
     "Total TURN loopback test transmit duration.",
     _TURN_LABELS,
+    registry=CMPING_REGISTRY,
+)
+
+#
+# Per-relay iroh-relay metrics
+#
+
+_IROH_LABELS = ["relay"]
+
+relay_iroh_status = Gauge(
+    "cmping_relay_iroh_status",
+    (
+        "Iroh-relay HTTP health.  1=ok, 0=down, "
+        "-2=no-metadata (server has no /shared/vendor/deltachat/irohrelay), "
+        "-3=imap-failed (could not fetch metadata), "
+        "-5=timeout (HTTP probe timed out)."
+    ),
+    _IROH_LABELS,
+    registry=CMPING_REGISTRY,
+)
+
+relay_iroh_latency_seconds = Gauge(
+    "cmping_relay_iroh_latency_seconds",
+    "Last successful iroh-relay HTTP GET latency.",
+    _IROH_LABELS,
     registry=CMPING_REGISTRY,
 )
 
@@ -307,7 +332,8 @@ def clear_stale_relay_labels(configured_relays: list[str]) -> None:
                    relay_turn_status, relay_turn_lost_packets,
                    relay_turn_send_dropped, relay_turn_connect_seconds,
                    relay_turn_transmit_seconds, relay_turn_rtt_seconds,
-                   relay_turn_jitter_seconds):
+                   relay_turn_jitter_seconds,
+                   relay_iroh_status, relay_iroh_latency_seconds):
         _drop_labels(metric, lambda lv: lv[0] in active)
 
 
@@ -348,6 +374,21 @@ def update_turn_metrics(relay: str, result: "TurnResult | None") -> None:
 
     _set_minmax(relay_turn_rtt_seconds,    base, (run.rtt_avg_s, run.rtt_min_s, run.rtt_max_s))
     _set_minmax(relay_turn_jitter_seconds, base, (run.jitter_avg_s, run.jitter_min_s, run.jitter_max_s))
+
+
+def update_iroh_metrics(relay: str, result: "IrohResult") -> None:
+    """Write a per-relay iroh-relay check outcome to prometheus.
+
+    Always sets the status gauge.  Sets latency only when the probe
+    succeeded; on failure the previous latency sample is left in place
+    (smokeping convention -- last-good value stays visible)."""
+    # Lazy import: iroh.py imports log_config + imap_metadata; metrics.py
+    # is imported very early, so keep this off the module top level.
+    from .iroh import IrohStatus  # noqa: PLC0415
+
+    relay_iroh_status.labels(relay=relay).set(result.status)
+    if result.latency_s is not None and result.status == IrohStatus.OK:
+        relay_iroh_latency_seconds.labels(relay=relay).set(result.latency_s)
 
 
 def sample_relay_connections(relays: list[str]) -> None:

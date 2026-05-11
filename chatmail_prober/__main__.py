@@ -240,6 +240,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="print tabular summary to stdout after --once exits (requires --once)",
     )
     parser.add_argument(
+        "-T", "--check-turn",
+        action="store_true",
+        default=False,
+        help="also probe each relay's TURN endpoint via turnutils_uclient (requires coturn-utils)",
+    )
+    parser.add_argument(
+        "-I", "--check-iroh",
+        action="store_true",
+        default=False,
+        help="also probe each relay's iroh-relay URL (via IMAP METADATA + HTTP GET)",
+    )
+    parser.add_argument(
         "-H", "--hosts",
         default=None,
         metavar="HOST[,HOST...]",

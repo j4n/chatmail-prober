@@ -23,6 +23,7 @@ from typing import Any
 import structlog
 
 from .log_config import get_logger
+from .iroh import IrohResult, IrohStatus, check_relay_iroh
 from .metrics import (
     clear_stale_labels,
     clear_stale_relay_labels,
@@ -32,6 +33,7 @@ from .metrics import (
     round_duration_seconds,
     rounds_total,
     sample_relay_connections,
+    update_iroh_metrics,
     update_metrics,
     update_turn_metrics,
     verify_relay_status,
@@ -143,6 +145,8 @@ def _run_turn_checks(
     args: argparse.Namespace,
 ) -> None:
     """Fan out TURN health checks across alive relays."""
+    if not getattr(args, "check_turn", False):
+        return
     if not alive_relays:
         return
     if shutil.which("turnutils_uclient") is None:
@@ -178,6 +182,76 @@ def _run_turn_checks(
                     update_turn_metrics(relay, None)
     log.warning("turn_check_complete",
                 elapsed_s=round(time.monotonic() - turn_start, 1))
+
+
+def _check_one_iroh(
+    pool: RelayPool, relay: str, imap_timeout: float, http_timeout: float,
+) -> None:
+    """Resolve iroh-relay URL via IMAP METADATA and HTTP-probe it."""
+    if pool.maker is None:
+        update_iroh_metrics(relay, IrohResult(status=IrohStatus.IMAP_FAILED,
+                                              error="no maker"))
+        return
+    try:
+        account, _ = pool.maker.get_relay_account(relay)
+    except Exception as e:
+        log.debug("iroh_account_unavailable", relay=relay, error=str(e))
+        update_iroh_metrics(relay, IrohResult(status=IrohStatus.IMAP_FAILED,
+                                              error=str(e)))
+        return
+    result = check_relay_iroh(
+        account, imap_timeout=imap_timeout, http_timeout=http_timeout,
+    )
+    update_iroh_metrics(relay, result)
+    log.info("iroh_check_done", relay=relay, status=int(result.status),
+             url=result.url, latency_s=result.latency_s,
+             http_status=result.http_status, error=result.error)
+
+
+def _run_iroh_checks(
+    alive_pool: RelayPool, alive_relays: list[str],
+    args: argparse.Namespace,
+) -> None:
+    """Fan out iroh-relay health checks across alive relays."""
+    if not getattr(args, "check_iroh", False):
+        return
+    if not alive_relays:
+        return
+    workers = min(len(alive_relays), args.workers)
+    # IMAP login + GETMETADATA is fast (~1s); cap the HTTP probe at the same
+    # short window so a misbehaving iroh-relay does not stall the round.
+    imap_timeout = min(15.0, float(args.timeout)) if args.timeout else 15.0
+    http_timeout = min(15.0, float(args.timeout) / 2) if args.timeout else 15.0
+    log.warning("iroh_check_start", count=len(alive_relays), workers=workers)
+    iroh_start = time.monotonic()
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(_check_one_iroh, alive_pool, r,
+                            imap_timeout, http_timeout): r
+            for r in alive_relays
+        }
+        # Outer deadline = sum of both per-relay timeouts plus headroom.
+        deadline = (imap_timeout + http_timeout) * 2
+        try:
+            for future in as_completed(futures, timeout=deadline):
+                relay = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    log.warning("iroh_check_failed", relay=relay, error=str(e))
+                    update_iroh_metrics(relay, IrohResult(
+                        status=IrohStatus.IMAP_FAILED, error=str(e),
+                    ))
+        except FuturesTimeoutError:
+            for future, relay in futures.items():
+                if not future.done():
+                    log.warning("iroh_check_timeout", relay=relay)
+                    future.cancel()
+                    update_iroh_metrics(relay, IrohResult(
+                        status=IrohStatus.TIMEOUT, error="round timeout",
+                    ))
+    log.warning("iroh_check_complete",
+                elapsed_s=round(time.monotonic() - iroh_start, 1))
 
 
 def check_relays_alive(
@@ -344,6 +418,7 @@ def check_relays_alive(
         _alive_now = [r for r in relays if r not in dead]
         _alive_now += [r for r in (unreachable_set or ()) if r not in dead]
         _run_turn_checks(alive_pool, _alive_now, args)
+        _run_iroh_checks(alive_pool, _alive_now, args)
 
     # Build alive list: normal relays that passed + unreachable relays that recovered.
     alive = [r for r in relays if r not in dead]
