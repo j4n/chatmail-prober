@@ -23,6 +23,7 @@ ExecStart=/opt/chatmail-prober/.local/bin/uv run chatmail-prober \
     --workers 15 \
     --timeout 30 \
     --cache-dir /var/lib/chatmail-prober \
+    --check-turn --check-iroh \
     -q
 
 # SIGUSR1 lets the current probe round finish before exiting cleanly.
@@ -31,8 +32,7 @@ ExecStart=/opt/chatmail-prober/.local/bin/uv run chatmail-prober \
 ExecReload=kill -s USR1 $MAINPID
 Restart=always
 RestartSec=30
-# Bound shutdown: the prober no longer enforces close timeouts internally
-# (it trusts the supervisor). systemd SIGKILLs us if cleanup hangs past this.
+# SIGKILLs if cleanup hangs past this.
 TimeoutStopSec=30
 # Raise the fd limit; the prober also does this at runtime but systemd's
 # default (1024) can be lower than the kernel hard limit.
